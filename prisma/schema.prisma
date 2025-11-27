@@ -71,6 +71,36 @@ model EmailRecipientEvent {
   emailHistoryId String       @db.ObjectId
   emailHistory   EmailHistory @relation(fields: [emailHistoryId], references: [id])
   recipientEmail String
-  status         String 
+  status         String
   createdAt      DateTime     @default(now())
+}
+
+model Domain {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  domain    String   @unique
+  status    String   @default("pending") // pending, verified, failed
+  region    String   @default("us-east-1")
+  resendId  String?  @unique
+  userId    String   @db.ObjectId
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  senders Sender[]
+
+  @@map("domains")
+}
+
+model Sender {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  name      String // Display name (e.g., "Sasu")
+  email     String   @unique // Full email (e.g., "info@sender.com")
+  domainId  String   @db.ObjectId
+  userId    String   @db.ObjectId
+  isDefault Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  domain Domain @relation(fields: [domainId], references: [id], onDelete: Cascade)
+
+  @@map("senders")
 }

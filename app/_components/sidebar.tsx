@@ -5,7 +5,7 @@ import { usePathname } from "next/navigation"
 import { signOut } from "next-auth/react"
 import { Button } from "@/app/_components/ui/button"
 import { cn } from "@/app/_lib/utils"
-import { LayoutDashboard, Users, Mail, History, LogOut, Send } from "lucide-react"
+import { LayoutDashboard, Users, Mail, History, LogOut, Send, Globe2 } from "lucide-react"
 
 const navigation = [
   {
@@ -17,6 +17,11 @@ const navigation = [
     name: "Contact Lists",
     href: "/contact-lists",
     icon: Users,
+  },
+  {
+    name: "Domains",
+    href: "/domains",
+    icon: Globe2,
   },
   {
     name: "Send Email",

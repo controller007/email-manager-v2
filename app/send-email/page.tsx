@@ -1,17 +1,18 @@
-import { requireAuth } from "@/app/_lib/auth/session";
-import DashboardLayout from "@/app/_components/dashboard-layout";
-import { EmailComposer } from "@/app/_components/email-composer";
-import prisma from "@/app/_lib/db/prisma";
+
+import { requireAuth } from "@/app/_lib/auth/session"
+import DashboardLayout from "@/app/_components/dashboard-layout"
+import { EmailComposer } from "@/app/_components/email-composer"
+import prisma from "@/app/_lib/db/prisma"
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@/app/_components/ui/card";
-import { Button } from "@/app/_components/ui/button";
-import { Users, Plus } from "lucide-react";
-import Link from "next/link";
+} from "@/app/_components/ui/card"
+import { Button } from "@/app/_components/ui/button"
+import { Users, Plus, Globe } from "lucide-react"
+import Link from "next/link"
 
 async function getContactLists(userId: string) {
   return await prisma.contactList.findMany({
@@ -28,12 +29,35 @@ async function getContactLists(userId: string) {
       emails: true,
       createdAt: true,
     },
-  });
+  })
+}
+
+async function getSenders(userId: string) {
+  return await prisma.sender.findMany({
+    where: {
+      userId,
+      domain: {
+        status: "verified",
+      },
+    },
+    include: {
+      domain: {
+        select: {
+          domain: true,
+          status: true,
+        },
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  })
 }
 
 export default async function SendEmailPage() {
-  const user = await requireAuth();
-  const contactLists = await getContactLists(user.id);
+  const user = await requireAuth()
+  const contactLists = await getContactLists(user.id)
+  const senders = await getSenders(user.id)
+
+  const hasNoSetup = contactLists.length === 0 || senders.length === 0
 
   return (
     <DashboardLayout>
@@ -46,49 +70,85 @@ export default async function SendEmailPage() {
               Compose and send emails to your contact lists
             </p>
           </div>
-          <Button asChild variant="outline">
-            <Link href="/contact-lists">
-              <Users className="mr-2 h-4 w-4" />
-              Manage Lists
-            </Link>
-          </Button>
+          <div className="flex gap-2">
+            <Button asChild variant="outline">
+              <Link href="/domains">
+                <Globe className="mr-2 h-4 w-4" />
+                Manage Domains
+              </Link>
+            </Button>
+            <Button asChild variant="outline">
+              <Link href="/contact-lists">
+                <Users className="mr-2 h-4 w-4" />
+                Manage Lists
+              </Link>
+            </Button>
+          </div>
         </div>
 
-        {/* Email Composer */}
-        {contactLists.length > 0 ? (
-          <EmailComposer contactLists={contactLists} />
+        {/* Email Composer or Setup Required */}
+        {!hasNoSetup ? (
+          <EmailComposer contactLists={contactLists} senders={senders} />
         ) : (
           <Card>
             <CardHeader>
-              <CardTitle>No Contact Lists Available</CardTitle>
+              <CardTitle>Setup Required</CardTitle>
               <CardDescription>
-                You need to create at least one contact list with email
-                addresses before you can send emails.
+                Complete the following steps before sending emails
               </CardDescription>
             </CardHeader>
             <CardContent>
-              <div className="text-center py-8">
-                <Users className="mx-auto h-12 w-12 text-gray-400" />
-                <h3 className="mt-4 text-lg font-medium text-gray-900">
-                  Create your first contact list
-                </h3>
-                <p className="mt-2 text-gray-500">
-                  Start by adding email addresses to a contact list, then return
-                  here to send your first campaign.
-                </p>
-                <div className="mt-6">
-                  <Button asChild>
-                    <Link href="/contact-lists">
-                      <Plus className="mr-2 h-4 w-4" />
-                      Create Contact List
-                    </Link>
-                  </Button>
-                </div>
+              <div className="space-y-6">
+                {/* No Senders */}
+                {senders.length === 0 && (
+                  <div className="border rounded-lg p-6">
+                    <div className="flex items-start gap-4">
+                      <Globe className="h-8 w-8 text-gray-400 flex-shrink-0" />
+                      <div className="flex-1">
+                        <h3 className="font-semibold text-gray-900 mb-2">
+                          No Verified Senders
+                        </h3>
+                        <p className="text-gray-600 text-sm mb-4">
+                          You need to add and verify a domain, then create at least one sender email before you can send campaigns.
+                        </p>
+                        <Button asChild>
+                          <Link href="/domains">
+                            <Plus className="mr-2 h-4 w-4" />
+                            Add Domain & Sender
+                          </Link>
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {/* No Contact Lists */}
+                {contactLists.length === 0 && (
+                  <div className="border rounded-lg p-6">
+                    <div className="flex items-start gap-4">
+                      <Users className="h-8 w-8 text-gray-400 flex-shrink-0" />
+                      <div className="flex-1">
+                        <h3 className="font-semibold text-gray-900 mb-2">
+                          No Contact Lists
+                        </h3>
+                        <p className="text-gray-600 text-sm mb-4">
+                          Create a contact list with email addresses to send campaigns to.
+                        </p>
+                        <Button asChild>
+                          <Link href="/contact-lists">
+                            <Plus className="mr-2 h-4 w-4" />
+                            Create Contact List
+                          </Link>
+                        </Button>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
         )}
       </div>
     </DashboardLayout>
-  );
+  )
 }

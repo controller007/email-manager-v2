@@ -8,10 +8,12 @@ export const contactListSchema = z.object({
     .min(1, "At least one email is required"),
 })
 
+
 export const emailComposeSchema = z.object({
-  subject: z.string().min(1, "Subject is required").max(200, "Subject must be less than 200 characters"),
+  subject: z.string().min(1, "Subject is required").max(200),
   body: z.string().min(1, "Email body is required"),
-  contactListId: z.string().min(1, "Please select a contact list"),
+  contactListId: z.string().min(1, "Contact list is required"),
+  senderId: z.string().min(1, "Sender is required"),
 })
 
 export const bulkEmailInputSchema = z.object({
