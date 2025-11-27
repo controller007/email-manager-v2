@@ -92,7 +92,7 @@ model Domain {
 
 model Sender {
   id        String   @id @default(auto()) @map("_id") @db.ObjectId
-  name      String // Display name (e.g., "Sasu")
+  name      String // Display name (e.g., "Jake Clever")
   email     String   @unique // Full email (e.g., "info@sender.com")
   domainId  String   @db.ObjectId
   userId    String   @db.ObjectId

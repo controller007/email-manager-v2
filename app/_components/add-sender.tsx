@@ -95,7 +95,7 @@ export function AddSenderDialog({ domainId, domainName }: AddSenderDialogProps) 
             <Label htmlFor="name">Display Name</Label>
             <Input
               id="name"
-              placeholder="e.g., Sasu, Support Team"
+              placeholder="e.g., Jake Clever, Support Team"
               value={name}
               onChange={(e) => setName(e.target.value)}
               disabled={isLoading}

@@ -95,7 +95,7 @@ export function EditSenderDialog({ sender, domainName }: EditSenderDialogProps) 
             <Label htmlFor="edit-name">Display Name</Label>
             <Input
               id="edit-name"
-              placeholder="e.g., Sasu, Support Team"
+              placeholder="e.g., Jake Clever, Support Team"
               value={name}
               onChange={(e) => setName(e.target.value)}
               disabled={isLoading}
