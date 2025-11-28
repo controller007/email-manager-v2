@@ -1,130 +1,147 @@
-import { type NextRequest, NextResponse } from "next/server";
-import { getSession } from "@/app/_lib/auth/session";
-import { contactListSchema } from "@/app/_lib/validations/email";
-import prisma from "@/app/_lib/db/prisma";
-import { resend } from "@/app/_lib/email/resend-client";
+// app/api/contact-lists/[id]/route.ts
+import { NextRequest, NextResponse } from "next/server"
+import { requireAuth } from "@/app/_lib/auth/session"
+import prisma from "@/app/_lib/db/prisma"
+import { contactListSchema } from "@/app/_lib/validations/email"
 
+export async function PUT(
+  request: NextRequest,
+  { params }: { params: { id: string } }
+) {
+  try {
+    const user = await requireAuth()
+    const body = await request.json()
 
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+    // Validate input
+    const validationResult = contactListSchema.safeParse(body)
+    if (!validationResult.success) {
+      return NextResponse.json(
+        { error: validationResult.error.errors[0].message },
+        { status: 400 }
+      )
+    }
 
+    const { name, emails, domainId } = validationResult.data
 
+    // Check if contact list exists and belongs to user
+    const existingList = await prisma.contactList.findUnique({
+      where: { id: params.id },
+    })
 
-export async function PUT(request: NextRequest, { params }: { params: { id: string } }) {
-  const session = await getSession();
-  if (!session?.user?.id) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+    if (!existingList) {
+      return NextResponse.json(
+        { error: "Contact list not found" },
+        { status: 404 }
+      )
+    }
 
-  const body = await request.json();
-  const validationResult = contactListSchema.safeParse(body);
-  if (!validationResult.success) {
+    if (existingList.createdBy !== user.id) {
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 403 }
+      )
+    }
+
+    // Check if a list with the same name exists (excluding current list)
+    const duplicateName = await prisma.contactList.findFirst({
+      where: {
+        name,
+        createdBy: user.id,
+        id: { not: params.id },
+      },
+    })
+
+    if (duplicateName) {
+      return NextResponse.json(
+        { error: "A contact list with this name already exists" },
+        { status: 400 }
+      )
+    }
+
+    // If domainId is provided, verify it exists and belongs to user
+    if (domainId && domainId !== existingList.domainId) {
+      const domain = await prisma.domain.findFirst({
+        where: {
+          id: domainId,
+          userId: user.id,
+          status: "verified",
+        },
+      })
+
+      if (!domain) {
+        return NextResponse.json(
+          { error: "Invalid or unverified domain" },
+          { status: 400 }
+        )
+      }
+    }
+
+    // Update contact list
+    const updatedList = await prisma.contactList.update({
+      where: { id: params.id },
+      data: {
+        name,
+        emails,
+        ...(domainId && { domainId }),
+        updatedAt: new Date(),
+      },
+      include: {
+        domain: {
+          select: {
+            domain: true,
+            status: true,
+          },
+        },
+      },
+    })
+
+    return NextResponse.json(updatedList)
+  } catch (error) {
+    console.error("Error updating contact list:", error)
     return NextResponse.json(
-      { error: validationResult.error.errors[0].message },
-      { status: 400 }
-    );
+      { error: "Failed to update contact list" },
+      { status: 500 }
+    )
   }
-
-  const { name, emails } = validationResult.data;
-
-  // Check list exists
-  const existingList = await prisma.contactList.findFirst({
-    where: { id: params.id, createdBy: session.user.id },
-  });
-
-  if (!existingList) {
-    return NextResponse.json({ error: "Contact list not found" }, { status: 404 });
-  }
-
-  let audienceId = existingList.audienceId as string;
-
-  // // If no audience in Resend yet, create one
-  // if (!audienceId) {
-  //   const newAudience = await resend.audiences.create({ name });
-  //   audienceId = newAudience.data?.id as string;
-  // } else {
-  //   // (Optional) update audience name if changed
-  //   await resend.audiences.update(audienceId, { name });
-  // }
-
-  // 1. Fetch existing contacts in this audience
-  const existingContactsRes = await resend.contacts.list({ audienceId });
-  const existingEmails = existingContactsRes.data?.data?.map((c: any) => c.email) || [];
-
-  const toAdd = emails.filter((e: string) => !existingEmails.includes(e));
-
-  const toRemove = existingEmails.filter((e: string) => !emails.includes(e));
-
-  for (const email of toAdd) {
-    try {
-      await resend.contacts.create({ email, audienceId });
-      await sleep(600); 
-    } catch (err) {
-      console.error(`Error adding ${email}:`, err);
-    }
-  }
-
-  for (const email of toRemove) {
-    try {
-      await resend.contacts.remove({ email, audienceId });
-      await sleep(600);
-    } catch (err) {
-      console.error(`Error removing ${email}:`, err);
-    }
-  }
-
-  const updatedContactList = await prisma.contactList.update({
-    where: { id: params.id },
-    data: { name, emails, audienceId },
-  });
-
-  return NextResponse.json(updatedContactList);
 }
-
 
 export async function DELETE(
   request: NextRequest,
   { params }: { params: { id: string } }
 ) {
   try {
-    const session = await getSession();
-    if (!session?.user?.id) {
-      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-    }
+    const user = await requireAuth()
 
-    const existingList = await prisma.contactList.findFirst({
-      where: {
-        id: params.id,
-        createdBy: session.user.id,
-      },
-    });
+    // Check if contact list exists and belongs to user
+    const existingList = await prisma.contactList.findUnique({
+      where: { id: params.id },
+    })
 
     if (!existingList) {
       return NextResponse.json(
         { error: "Contact list not found" },
         { status: 404 }
-      );
+      )
     }
 
-    if (existingList.audienceId) {
-      try {
-        await resend.audiences.remove(existingList.audienceId);
-      } catch (err) {
-        console.warn("Failed to remove audience in Resend:", err);
-      }
+    if (existingList.createdBy !== user.id) {
+      return NextResponse.json(
+        { error: "Unauthorized" },
+        { status: 403 }
+      )
     }
 
+    // Delete contact list
     await prisma.contactList.delete({
       where: { id: params.id },
-    });
+    })
 
-    return NextResponse.json({ success: true });
+    return NextResponse.json({ success: true })
   } catch (error) {
-    console.error("Error deleting contact list:", error);
+    console.error("Error deleting contact list:", error)
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: "Failed to delete contact list" },
       { status: 500 }
-    );
+    )
   }
 }

@@ -1,7 +1,6 @@
 "use client"
 
 import type React from "react"
-
 import { useState } from "react"
 import { useRouter } from "next/navigation"
 import { Button } from "@/app/_components/ui/button"
@@ -17,13 +16,22 @@ import {
   DialogTitle,
   DialogTrigger,
 } from "@/app/_components/ui/dialog"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/app/_components/ui/select"
 import { Alert, AlertDescription } from "@/app/_components/ui/alert"
 import { Badge } from "@/app/_components/ui/badge"
 import { contactListSchema } from "@/app/_lib/validations/email"
-import { AlertCircle, X, Plus, CheckCircle, Clock } from "lucide-react"
+import { AlertCircle, X, Plus, CheckCircle, Clock, Globe } from "lucide-react"
+import { Domain, Sender } from "@prisma/client"
 
 interface CreateContactListDialogProps {
   children: React.ReactNode
+  verifiedDomains: Array<Domain & { senders: Sender[] }>
 }
 
 interface EmailValidationResult {
@@ -34,9 +42,13 @@ interface EmailValidationResult {
   error?: string
 }
 
-export function CreateContactListDialog({ children }: CreateContactListDialogProps) {
+export function CreateContactListDialog({ 
+  children, 
+  verifiedDomains 
+}: CreateContactListDialogProps) {
   const [open, setOpen] = useState(false)
   const [name, setName] = useState("")
+  const [domainId, setDomainId] = useState("")
   const [emailsInput, setEmailsInput] = useState("")
   const [validEmails, setValidEmails] = useState<string[]>([])
   const [invalidEmails, setInvalidEmails] = useState<string[]>([])
@@ -46,26 +58,21 @@ export function CreateContactListDialog({ children }: CreateContactListDialogPro
   const [isLoading, setIsLoading] = useState(false)
   const router = useRouter()
 
-  // Enhanced email parsing function
+  const selectedDomain = verifiedDomains.find(d => d.id === domainId)
+
   const parseEmails = (input: string): string[] => {
     if (!input.trim()) return []
-
-    // Split by multiple delimiters: comma, semicolon, space, newline, tab
     const emails = input
       .split(/[,;\s\n\t]+/)
       .map((email) => email.trim())
       .filter((email) => email.length > 0)
-      // Remove duplicates
       .filter((email, index, arr) => arr.indexOf(email) === index)
-
     return emails
   }
 
-  // Enhanced email validation with better regex
   const isValidEmailFormat = (email: string): boolean => {
-    // More comprehensive email regex
     const emailRegex = /^[a-zA-Z0-9.!#$%&'*+/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/
-    return emailRegex.test(email) && email.length <= 254 // RFC 5321 limit
+    return emailRegex.test(email) && email.length <= 254
   }
 
   const validateEmailFormats = (input: string) => {
@@ -90,8 +97,6 @@ export function CreateContactListDialog({ children }: CreateContactListDialogPro
 
     setValidEmails(valid)
     setInvalidEmails(invalid)
-    
-    // Reset validation results when emails change
     setEmailValidationResults([])
   }
 
@@ -100,20 +105,13 @@ export function CreateContactListDialog({ children }: CreateContactListDialogPro
     validateEmailFormats(value)
   }
 
-const removeInvalidEmail = (emailToRemove: string) => {
-  // Remove only from invalidEmails
-  setInvalidEmails((prev) => prev.filter((email) => email !== emailToRemove))
+  const removeInvalidEmail = (emailToRemove: string) => {
+    setInvalidEmails((prev) => prev.filter((email) => email !== emailToRemove))
+    const emails = parseEmails(emailsInput)
+    const updatedEmails = emails.filter((email) => email !== emailToRemove)
+    setEmailsInput(updatedEmails.join(", "))
+  }
 
-  // Also update the textarea text to drop it
-  const emails = parseEmails(emailsInput)
-  const updatedEmails = emails.filter((email) => email !== emailToRemove)
-  setEmailsInput(updatedEmails.join(", "))
-
-  // ✅ Do NOT call validateEmailFormats here, so we don't reset results
-}
-
-
-  // Server action to validate emails with MX records
   const validateEmailsWithMX = async () => {
     if (validEmails.length === 0) return
 
@@ -134,7 +132,6 @@ const removeInvalidEmail = (emailToRemove: string) => {
       const results: EmailValidationResult[] = await response.json()
       setEmailValidationResults(results)
 
-      // Update valid/invalid emails based on MX validation
       const mxValidEmails = results
         .filter(result => result.isValid && result.hasMxRecord && result.isReachable)
         .map(result => result.email)
@@ -169,6 +166,7 @@ const removeInvalidEmail = (emailToRemove: string) => {
       const validationResult = contactListSchema.safeParse({
         name: name.trim(),
         emails: validEmails,
+        domainId: domainId,
       })
 
       if (!validationResult.success) {
@@ -191,6 +189,7 @@ const removeInvalidEmail = (emailToRemove: string) => {
 
       setOpen(false)
       setName("")
+      setDomainId("")
       setEmailsInput("")
       setValidEmails([])
       setInvalidEmails([])
@@ -223,8 +222,7 @@ const removeInvalidEmail = (emailToRemove: string) => {
         <DialogHeader>
           <DialogTitle>Create Contact List</DialogTitle>
           <DialogDescription>
-            Create a new contact list to organize your email recipients. You can add up to 100 email addresses.
-            Emails will be validated for format and domain deliverability.
+            Create a new contact list linked to a verified domain. The domain determines which sender emails you can use.
           </DialogDescription>
         </DialogHeader>
 
@@ -236,8 +234,45 @@ const removeInvalidEmail = (emailToRemove: string) => {
             </Alert>
           )}
 
+          {verifiedDomains.length === 0 && (
+            <Alert>
+              <Globe className="h-4 w-4" />
+              <AlertDescription>
+                <strong>No verified domains available.</strong> You need to add and verify a domain before creating contact lists.
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {/* Domain Selection */}
           <div className="space-y-2">
-            <Label htmlFor="name">List Name</Label>
+            <Label htmlFor="domain">Select Domain *</Label>
+            <Select value={domainId} onValueChange={setDomainId} disabled={isLoading || verifiedDomains.length === 0}>
+              <SelectTrigger>
+                <SelectValue placeholder="Choose a verified domain" />
+              </SelectTrigger>
+              <SelectContent>
+                {verifiedDomains.map((domain) => (
+                  <SelectItem key={domain.id} value={domain.id}>
+                    <div className="flex items-center gap-2">
+                      <Globe className="h-4 w-4" />
+                      <span>{domain.domain}</span>
+                      <Badge variant="outline" className="text-xs">
+                        {domain.senders.length} sender{domain.senders.length !== 1 ? 's' : ''}
+                      </Badge>
+                    </div>
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {selectedDomain && (
+              <p className="text-sm text-gray-500">
+                Contact list will use senders from <strong>{selectedDomain.domain}</strong>
+              </p>
+            )}
+          </div>
+
+          <div className="space-y-2">
+            <Label htmlFor="name">List Name *</Label>
             <Input
               id="name"
               placeholder="e.g., Newsletter Subscribers, VIP Customers"
@@ -249,7 +284,7 @@ const removeInvalidEmail = (emailToRemove: string) => {
           </div>
 
           <div className="space-y-2">
-            <Label htmlFor="emails">Email Addresses</Label>
+            <Label htmlFor="emails">Email Addresses *</Label>
             <Textarea
               id="emails"
               placeholder="Enter email addresses separated by commas, spaces, or new lines&#10;example@domain.com user@company.com&#10;another@email.com, test@site.com"
@@ -267,7 +302,7 @@ const removeInvalidEmail = (emailToRemove: string) => {
                   type="button"
                   variant="outline"
                   size="sm"
-                   className="bg-blue-500 text-white hover:bg-blue-400 w-fit hover:text-white"
+                  className="bg-blue-500 text-white hover:bg-blue-400 w-fit hover:text-white"
                   onClick={validateEmailsWithMX}
                   disabled={isValidatingEmails || isLoading}
                 >
@@ -315,18 +350,6 @@ const removeInvalidEmail = (emailToRemove: string) => {
                   )}
                 </div>
               </div>
-              {emailValidationResults.length > 0 && (
-                <div className="text-xs text-gray-600 space-y-1">
-                  <div className="flex items-center gap-2">
-                    <CheckCircle className="h-3 w-3 text-green-600" />
-                    <span>Deliverable domain</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <AlertCircle className="h-3 w-3 text-yellow-600" />
-                    <span>Valid domain, delivery uncertain</span>
-                  </div>
-                </div>
-              )}
             </div>
           )}
 
@@ -358,7 +381,10 @@ const removeInvalidEmail = (emailToRemove: string) => {
             <Button type="button" variant="outline" onClick={() => setOpen(false)} disabled={isLoading}>
               Cancel
             </Button>
-            <Button type="submit" disabled={isLoading || invalidEmails.length > 0 || validEmails.length === 0}>
+            <Button 
+              type="submit" 
+              disabled={isLoading || invalidEmails.length > 0 || validEmails.length === 0 || !domainId || verifiedDomains.length === 0}
+            >
               {isLoading ? (
                 <>
                   <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />

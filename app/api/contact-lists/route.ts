@@ -25,14 +25,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const { name, emails } = validationResult.data;
+    const { name, emails,domainId } = validationResult.data;
 
     // 1. Create Audience in Resend
     const audience = await resend.audiences.create({
       name,
     });
 
-    console.log(audience);
 
     for (const email of emails) {
       try {
@@ -58,6 +57,7 @@ export async function POST(request: NextRequest) {
       data: {
         name,
         emails,
+        domainId, 
         createdBy: session.user.id,
         audienceId: audience.data?.id as string,
       },

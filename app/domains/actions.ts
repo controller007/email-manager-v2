@@ -98,9 +98,9 @@ export async function verifyDomain(domainId: string) {
       return { success: false, error: "Domain not found" };
     }
 
+    await resend.domains.verify(domain.resendId);
 
-
-    const { data ,error} = await resend.domains.get(domain.resendId);
+    const { data, error } = await resend.domains.get(domain.resendId);
 
     if (error) {
       return {
@@ -109,7 +109,7 @@ export async function verifyDomain(domainId: string) {
       };
     }
 
-    // Update domain 
+    // Update domain
     const status = data?.status === "verified" ? "verified" : "pending";
 
     if (status == "verified") {
@@ -276,7 +276,6 @@ export async function deleteDomain(domainId: string) {
   }
 }
 
-
 export async function updateSender(
   senderId: string,
   name: string,
@@ -284,17 +283,17 @@ export async function updateSender(
   domainName: string
 ) {
   try {
-    const user = await requireAuth()
+    const user = await requireAuth();
 
     const sender = await prisma.sender.findFirst({
       where: { id: senderId, userId: user.id },
-    })
+    });
 
     if (!sender) {
-      return { success: false, error: "Sender not found" }
+      return { success: false, error: "Sender not found" };
     }
 
-    const newEmail = `${username}@${domainName}`
+    const newEmail = `${username}@${domainName}`;
 
     // Check if new email already exists (excluding current sender)
     const existingSender = await prisma.sender.findFirst({
@@ -302,10 +301,10 @@ export async function updateSender(
         email: newEmail,
         id: { not: senderId },
       },
-    })
+    });
 
     if (existingSender) {
-      return { success: false, error: "This email is already in use" }
+      return { success: false, error: "This email is already in use" };
     }
 
     const updatedSender = await prisma.sender.update({
@@ -314,9 +313,9 @@ export async function updateSender(
         name: name.trim(),
         email: newEmail,
       },
-    })
+    });
 
-    revalidatePath("/domains")
+    revalidatePath("/domains");
 
     return {
       success: true,
@@ -325,34 +324,34 @@ export async function updateSender(
         name: updatedSender.name,
         email: updatedSender.email,
       },
-    }
+    };
   } catch (error) {
-    console.error("Update sender error:", error)
-    return { success: false, error: "Failed to update sender" }
+    console.error("Update sender error:", error);
+    return { success: false, error: "Failed to update sender" };
   }
 }
 
 export async function deleteSender(senderId: string) {
   try {
-    const user = await requireAuth()
+    const user = await requireAuth();
 
     const sender = await prisma.sender.findFirst({
       where: { id: senderId, userId: user.id },
-    })
+    });
 
     if (!sender) {
-      return { success: false, error: "Sender not found" }
+      return { success: false, error: "Sender not found" };
     }
 
     await prisma.sender.delete({
       where: { id: senderId },
-    })
+    });
 
-    revalidatePath("/domains")
+    revalidatePath("/domains");
 
-    return { success: true, message: "Sender deleted successfully" }
+    return { success: true, message: "Sender deleted successfully" };
   } catch (error) {
-    console.error("Delete sender error:", error)
-    return { success: false, error: "Failed to delete sender" }
+    console.error("Delete sender error:", error);
+    return { success: false, error: "Failed to delete sender" };
   }
 }

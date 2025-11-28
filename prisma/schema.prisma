@@ -34,15 +34,32 @@ model ContactList {
   name       String
   emails     String[]
   audienceId String?
+  domainId   String   @db.ObjectId  // 👈 NEW: Required domain link
   createdBy  String   @db.ObjectId
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
-
-  // Relations
+  
   user         User           @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+  domain       Domain         @relation(fields: [domainId], references: [id], onDelete: Cascade)
   emailHistory EmailHistory[]
-
+  
   @@map("contact_lists")
+}
+
+model Domain {
+  id           String        @id @default(auto()) @map("_id") @db.ObjectId
+  domain       String        @unique
+  status       String        @default("pending")
+  region       String        @default("us-east-1")
+  resendId     String?       @unique
+  userId       String        @db.ObjectId
+  createdAt    DateTime      @default(now())
+  updatedAt    DateTime      @updatedAt
+  
+  senders      Sender[]
+  contactLists ContactList[]
+  
+  @@map("domains")
 }
 
 model EmailHistory {
@@ -75,20 +92,7 @@ model EmailRecipientEvent {
   createdAt      DateTime     @default(now())
 }
 
-model Domain {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
-  domain    String   @unique
-  status    String   @default("pending") // pending, verified, failed
-  region    String   @default("us-east-1")
-  resendId  String?  @unique
-  userId    String   @db.ObjectId
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
 
-  senders Sender[]
-
-  @@map("domains")
-}
 
 model Sender {
   id        String   @id @default(auto()) @map("_id") @db.ObjectId

@@ -1,10 +1,11 @@
+// app/email-history/page.tsx
 import { requireAuth } from "@/app/_lib/auth/session"
 import DashboardLayout from "@/app/_components/dashboard-layout"
 import { EmailHistoryList } from "@/app/_components/email-history-list"
 import { EmailHistoryFilters } from "@/app/_components/email-history-filters"
 import { Button } from "@/app/_components/ui/button"
 import prisma from "@/app/_lib/db/prisma"
-import { Send, RefreshCw } from "lucide-react"
+import { Send } from "lucide-react"
 import Link from "next/link"
 
 interface SearchParams {
@@ -14,8 +15,6 @@ interface SearchParams {
 }
 
 async function getEmailHistory(userId: string, searchParams: SearchParams) {
-
-
   const page = Number.parseInt(searchParams.page || "1")
   const limit = 10
   const offset = (page - 1) * limit
@@ -41,7 +40,19 @@ async function getEmailHistory(userId: string, searchParams: SearchParams) {
       skip: offset,
       include: {
         contactList: {
-          select: { name: true },
+          select: { 
+            name: true,
+            domain: {
+              select: {
+                domain: true,
+              },
+            },
+            _count: {
+              select: {
+                emailHistory: true,
+              },
+            },
+          },
         },
       },
     }),
@@ -64,7 +75,6 @@ export default async function EmailHistoryPage({
   const user = await requireAuth()
   const { emailHistory, totalCount, currentPage, totalPages } = await getEmailHistory(user.id, searchParams)
 
-
   return (
     <DashboardLayout>
       <div className="space-y-8">
@@ -72,7 +82,9 @@ export default async function EmailHistoryPage({
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Email History</h1>
-            <p className="text-gray-600 mt-1">View and track all your email campaigns and their delivery status</p>
+            <p className="text-gray-600 mt-1">
+              View and track all your email campaigns and their delivery status
+            </p>
           </div>
           <div className="flex gap-3">
             <Button asChild>

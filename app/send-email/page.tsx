@@ -1,18 +1,17 @@
-
-import { requireAuth } from "@/app/_lib/auth/session"
-import DashboardLayout from "@/app/_components/dashboard-layout"
-import { EmailComposer } from "@/app/_components/email-composer"
-import prisma from "@/app/_lib/db/prisma"
+import { requireAuth } from "@/app/_lib/auth/session";
+import DashboardLayout from "@/app/_components/dashboard-layout";
+import { EmailComposer } from "@/app/_components/email-composer";
+import prisma from "@/app/_lib/db/prisma";
 import {
   Card,
   CardContent,
   CardDescription,
   CardHeader,
   CardTitle,
-} from "@/app/_components/ui/card"
-import { Button } from "@/app/_components/ui/button"
-import { Users, Plus, Globe } from "lucide-react"
-import Link from "next/link"
+} from "@/app/_components/ui/card";
+import { Button } from "@/app/_components/ui/button";
+import { Users, Plus, Globe } from "lucide-react";
+import Link from "next/link";
 
 async function getContactLists(userId: string) {
   return await prisma.contactList.findMany({
@@ -22,14 +21,20 @@ async function getContactLists(userId: string) {
         isEmpty: false,
       },
     },
-    orderBy: { createdAt: "desc" },
     select: {
       id: true,
       name: true,
       emails: true,
       createdAt: true,
+      domain: {
+        select: {
+          id: true,
+          domain: true,
+        },
+      },
     },
-  })
+    orderBy: { createdAt: "desc" },
+  });
 }
 
 async function getSenders(userId: string) {
@@ -43,21 +48,22 @@ async function getSenders(userId: string) {
     include: {
       domain: {
         select: {
+          id: true,
           domain: true,
           status: true,
         },
       },
     },
     orderBy: { createdAt: "desc" },
-  })
+  });
 }
 
 export default async function SendEmailPage() {
-  const user = await requireAuth()
-  const contactLists = await getContactLists(user.id)
-  const senders = await getSenders(user.id)
+  const user = await requireAuth();
+  const contactLists = await getContactLists(user.id);
+  const senders = await getSenders(user.id);
 
-  const hasNoSetup = contactLists.length === 0 || senders.length === 0
+  const hasNoSetup = contactLists.length === 0 || senders.length === 0;
 
   return (
     <DashboardLayout>
@@ -109,7 +115,8 @@ export default async function SendEmailPage() {
                           No Verified Senders
                         </h3>
                         <p className="text-gray-600 text-sm mb-4">
-                          You need to add and verify a domain, then create at least one sender email before you can send campaigns.
+                          You need to add and verify a domain, then create at
+                          least one sender email before you can send campaigns.
                         </p>
                         <Button asChild>
                           <Link href="/domains">
@@ -132,7 +139,8 @@ export default async function SendEmailPage() {
                           No Contact Lists
                         </h3>
                         <p className="text-gray-600 text-sm mb-4">
-                          Create a contact list with email addresses to send campaigns to.
+                          Create a contact list with email addresses to send
+                          campaigns to.
                         </p>
                         <Button asChild>
                           <Link href="/contact-lists">
@@ -150,5 +158,5 @@ export default async function SendEmailPage() {
         )}
       </div>
     </DashboardLayout>
-  )
+  );
 }

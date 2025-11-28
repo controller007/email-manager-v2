@@ -59,7 +59,8 @@ export async function POST(request: NextRequest) {
     })
 
     const htmlContent = generateEmailTemplate(emailBody, subject)
-    const fromEmail = `${sender.name} <${sender.email}>`
+    const fromEmail = `${sender.name.replaceAll(" ","")} <${sender.email}>`
+    
 
     // Create and send broadcast with tracking enabled
     const broadcast = await resend.broadcasts.create({
