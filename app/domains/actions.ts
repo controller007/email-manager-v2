@@ -249,11 +249,11 @@ export async function getAllDomains() {
 }
 
 
+
 export async function deleteDomain(domainId: string) {
   try {
     const user = await requireAuth();
 
-    // Fetch domain with all related data
     const domain = await prisma.domain.findFirst({
       where: { id: domainId, userId: user.id },
       include: {
@@ -269,40 +269,20 @@ export async function deleteDomain(domainId: string) {
         senders: true,
       },
     });
+    
 
     if (!domain) {
       return { success: false, error: "Domain not found" };
     }
 
-    // Get all email history IDs from all contact lists
     const emailHistoryIds = domain.contactLists.flatMap((list) =>
       list.emailHistory.map((eh) => eh.id)
     );
 
-    // Delete Resend audiences for all contact lists
     for (const list of domain.contactLists) {
       if (list.audienceId) {
         try {
-          // Delete contacts first (with basic rate limiting)
-          if (list.emails.length > 0) {
-            console.log(
-              `Deleting ${list.emails.length} contacts from audience ${list.audienceId}`
-            );
-            for (const email of list.emails) {
-              try {
-                await resend.contacts.remove({
-                  audienceId: list.audienceId,
-                  email: email,
-                });
-                // Simple delay to respect rate limits
-                await new Promise((resolve) => setTimeout(resolve, 1100));
-              } catch (error) {
-                console.error(`Failed to delete contact ${email}:`, error);
-              }
-            }
-          }
-
-          // Delete the audience
+          await resend.contacts.remove({audienceId:list.audienceId});
           await resend.audiences.remove(list.audienceId);
           console.log(`Deleted Resend audience: ${list.audienceId}`);
         } catch (error) {
@@ -310,12 +290,10 @@ export async function deleteDomain(domainId: string) {
             `Failed to delete Resend audience ${list.audienceId}:`,
             error
           );
-          // Continue with deletion even if Resend fails
         }
       }
     }
 
-    // Delete from Resend domain if it has a resendId
     if (domain.resendId) {
       try {
         await resend.domains.remove(domain.resendId);
