@@ -98,9 +98,11 @@ export async function verifyDomain(domainId: string) {
       return { success: false, error: "Domain not found" };
     }
 
-    await resend.domains.verify(domain.resendId);
+    const { data: Verification } = await resend.domains.verify(domain.resendId);
 
     const { data, error } = await resend.domains.get(domain.resendId);
+
+    console.log(data);
 
     if (error) {
       return {
@@ -262,6 +264,12 @@ export async function deleteDomain(domainId: string) {
     if (domain.resendId) {
       await resend.domains.remove(domain.resendId);
     }
+
+    await prisma.contactList.deleteMany({
+      where: {
+        domainId: domainId,
+      },
+    });
 
     await prisma.domain.delete({
       where: { id: domainId },
