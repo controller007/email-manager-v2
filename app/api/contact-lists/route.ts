@@ -171,7 +171,7 @@ export async function DELETE(request: NextRequest) {
             console.log(`Deleted Resend audience: ${list.audienceId}`);
           } catch (error) {
             console.error(
-              `Failed to delete Resend audience for list "${list.name}":`,
+              `Failed to delete Resend  audience for list "${list.name}":`,
               error
             );
             // Continue with database deletion even if Resend fails
