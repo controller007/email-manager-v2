@@ -62,7 +62,7 @@ export default async function ContactListsPage() {
               Manage your email recipient lists and send targeted campaigns
             </p>
           </div>
-          <CreateContactListDialog verifiedDomains={verifiedDomains}>
+          <CreateContactListDialog  verifiedDomains={verifiedDomains}>
             <Button disabled={verifiedDomains.length === 0}>
               <Plus className="mr-2 h-4 w-4" />
               Create List
