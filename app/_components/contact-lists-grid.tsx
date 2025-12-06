@@ -61,11 +61,12 @@ interface ContactListWithRelations extends ContactList {
 
 interface ContactListsGridProps {
   contactLists: ContactListWithRelations[];
+  domains:Domain[]
 }
 
 const ITEMS_PER_PAGE = 9;
 
-export function ContactListsGrid({ contactLists }: ContactListsGridProps) {
+export function ContactListsGrid({ contactLists,domains }: ContactListsGridProps) {
   const router = useRouter();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -76,9 +77,7 @@ export function ContactListsGrid({ contactLists }: ContactListsGridProps) {
   const [currentPage, setCurrentPage] = useState(1);
 
   // Get unique domains for filter
-  const uniqueDomains = Array.from(
-    new Set(contactLists.map((list) => list.domain?.domain).filter(Boolean))
-  ) as string[];
+  const uniqueDomains = domains.map(domain => domain?.domain) as string[];
 
   // Filter logic
   const filteredLists = contactLists.filter((list) => {

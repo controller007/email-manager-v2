@@ -141,7 +141,7 @@ export default async function ContactListsPage() {
         )}
 
         {/* Contact Lists Grid */}
-        <ContactListsGrid contactLists={contactLists} />
+        <ContactListsGrid domains={verifiedDomains} contactLists={contactLists} />
 
         {/* Empty State */}
         {contactLists.length === 0 && verifiedDomains.length > 0 && (
