@@ -107,8 +107,8 @@ export function ContactListsGrid({ contactLists }: ContactListsGridProps) {
     setDeleteError("")
 
     try {
-      const response = await fetch("/api/contact-lists/bulk-delete", {
-        method: "POST",
+      const response = await fetch("/api/contact-lists", {
+        method: "DELETE",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ids: Array.from(selectedIds) }),
       })
