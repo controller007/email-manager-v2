@@ -248,21 +248,103 @@ export async function getAllDomains() {
   }
 }
 
+
 export async function deleteDomain(domainId: string) {
   try {
     const user = await requireAuth();
 
+    // Fetch domain with all related data
     const domain = await prisma.domain.findFirst({
       where: { id: domainId, userId: user.id },
+      include: {
+        contactLists: {
+          include: {
+            emailHistory: {
+              select: {
+                id: true,
+              },
+            },
+          },
+        },
+        senders: true,
+      },
     });
 
     if (!domain) {
       return { success: false, error: "Domain not found" };
     }
 
-    // Delete from Resend if it has a resendId
+    // Get all email history IDs from all contact lists
+    const emailHistoryIds = domain.contactLists.flatMap((list) =>
+      list.emailHistory.map((eh) => eh.id)
+    );
+
+    // Delete Resend audiences for all contact lists
+    for (const list of domain.contactLists) {
+      if (list.audienceId) {
+        try {
+          // Delete contacts first (with basic rate limiting)
+          if (list.emails.length > 0) {
+            console.log(
+              `Deleting ${list.emails.length} contacts from audience ${list.audienceId}`
+            );
+            for (const email of list.emails) {
+              try {
+                await resend.contacts.remove({
+                  audienceId: list.audienceId,
+                  email: email,
+                });
+                // Simple delay to respect rate limits
+                await new Promise((resolve) => setTimeout(resolve, 1100));
+              } catch (error) {
+                console.error(`Failed to delete contact ${email}:`, error);
+              }
+            }
+          }
+
+          // Delete the audience
+          await resend.audiences.remove(list.audienceId);
+          console.log(`Deleted Resend audience: ${list.audienceId}`);
+        } catch (error) {
+          console.error(
+            `Failed to delete Resend audience ${list.audienceId}:`,
+            error
+          );
+          // Continue with deletion even if Resend fails
+        }
+      }
+    }
+
+    // Delete from Resend domain if it has a resendId
     if (domain.resendId) {
-      await resend.domains.remove(domain.resendId);
+      try {
+        await resend.domains.remove(domain.resendId);
+        console.log(`Deleted Resend domain: ${domain.resendId}`);
+      } catch (error) {
+        console.error("Failed to delete Resend domain:", error);
+        // Continue with database deletion even if Resend fails
+      }
+    }
+
+    // 1. Delete EmailRecipientEvent records first
+    if (emailHistoryIds.length > 0) {
+      await prisma.emailRecipientEvent.deleteMany({
+        where: {
+          emailHistoryId: { in: emailHistoryIds },
+        },
+      });
+      console.log(
+        `Deleted EmailRecipientEvent records for ${emailHistoryIds.length} email histories`
+      );
+    }
+
+    if (emailHistoryIds.length > 0) {
+      await prisma.emailHistory.deleteMany({
+        where: {
+          id: { in: emailHistoryIds },
+        },
+      });
+      console.log(`Deleted ${emailHistoryIds.length} EmailHistory records`);
     }
 
     await prisma.contactList.deleteMany({
@@ -270,17 +352,28 @@ export async function deleteDomain(domainId: string) {
         domainId: domainId,
       },
     });
+    console.log(`Deleted ${domain.contactLists.length} contact lists`);
+
+    // 4. Delete Senders
+    await prisma.sender.deleteMany({
+      where: {
+        domainId: domainId,
+      },
+    });
+    console.log(`Deleted ${domain.senders.length} senders`);
 
     await prisma.domain.delete({
       where: { id: domainId },
     });
 
-    revalidatePath("/domains");
-
+    revalidatePath("/");
     return { success: true, message: "Domain deleted successfully" };
   } catch (error) {
     console.error("Delete domain error:", error);
-    return { success: false, error: "Failed to delete domain" };
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : "Failed to delete domain",
+    };
   }
 }
 

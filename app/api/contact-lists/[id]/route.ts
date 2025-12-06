@@ -4,6 +4,7 @@ import { requireAuth } from "@/app/_lib/auth/session"
 import prisma from "@/app/_lib/db/prisma"
 import { contactListSchema } from "@/app/_lib/validations/email"
 import { resend } from "@/app/_lib/email/resend-client"
+import { revalidatePath } from "next/cache"
 
 // Helper function to delay execution (for rate limiting)
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
@@ -200,6 +201,8 @@ export async function DELETE(
     await prisma.contactList.delete({
       where: { id: params.id },
     })
+
+    revalidatePath("/")
   
     return NextResponse.json({ 
       success: true,

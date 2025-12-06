@@ -119,6 +119,7 @@ export function ContactListsGrid({ contactLists }: ContactListsGridProps) {
       }
 
       setSelectedIds(new Set())
+      setCurrentPage(1)
       setDeleteDialogOpen(false)
       router.refresh()
     } catch (error) {

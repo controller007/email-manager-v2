@@ -3,6 +3,7 @@ import { getSession, requireAuth } from "@/app/_lib/auth/session";
 import { contactListSchema } from "@/app/_lib/validations/email";
 import prisma from "@/app/_lib/db/prisma";
 import { resend } from "@/app/_lib/email/resend-client";
+import { revalidatePath } from "next/cache";
 
 function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -102,6 +103,7 @@ export async function GET(request: NextRequest) {
 
 
 
+
 const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms))
 
 export async function DELETE(request: NextRequest) {
@@ -125,6 +127,11 @@ export async function DELETE(request: NextRequest) {
       },
       include: {
         domain: true,
+        emailHistory: {
+          select: {
+            id: true,
+          },
+        },
       },
     })
     
@@ -205,7 +212,34 @@ export async function DELETE(request: NextRequest) {
       }
     }
     
-    // Delete all contact lists from database
+    // Get all email history IDs for these contact lists
+    const emailHistoryIds = contactLists.flatMap(list => 
+      list.emailHistory.map(eh => eh.id)
+    )
+    
+    // Delete in the correct order to respect foreign key constraints
+    
+    // 1. Delete EmailRecipientEvent records first
+    if (emailHistoryIds.length > 0) {
+      await prisma.emailRecipientEvent.deleteMany({
+        where: {
+          emailHistoryId: { in: emailHistoryIds },
+        },
+      })
+      console.log(`Deleted EmailRecipientEvent records for ${emailHistoryIds.length} email histories`)
+    }
+    
+    // 2. Delete EmailHistory records
+    if (emailHistoryIds.length > 0) {
+      await prisma.emailHistory.deleteMany({
+        where: {
+          id: { in: emailHistoryIds },
+        },
+      })
+      console.log(`Deleted ${emailHistoryIds.length} EmailHistory records`)
+    }
+    
+    // 3. Finally, delete all contact lists from database
     await prisma.contactList.deleteMany({
       where: {
         id: { in: ids },
@@ -215,6 +249,7 @@ export async function DELETE(request: NextRequest) {
     
     console.log(`Bulk delete complete: ${deletionResults.successfulDeletes} successful, ${deletionResults.failedDeletes} failed`)
     
+    revalidatePath("/")
     return NextResponse.json({
       success: true,
       message: `Successfully deleted ${contactLists.length} contact list(s)`,
