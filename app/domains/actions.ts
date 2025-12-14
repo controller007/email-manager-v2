@@ -4,7 +4,6 @@ import { revalidatePath } from "next/cache";
 import { requireAuth } from "@/app/_lib/auth/session";
 import prisma from "@/app/_lib/db/prisma";
 import { resend } from "@/app/_lib/email/resend-client";
-import { log } from "node:console";
 
 interface DomainDnsRecords {
   record: string;
@@ -100,9 +99,10 @@ export async function verifyDomain(domainId: string) {
 
     const { data: Verification } = await resend.domains.verify(domain.resendId);
 
+
+    
     const { data, error } = await resend.domains.get(domain.resendId);
 
-    console.log(data);
 
     if (error) {
       return {

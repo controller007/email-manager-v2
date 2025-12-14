@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/app/_lib/db/prisma";
+import { resend } from "@/app/_lib/email/resend-client";
 
 export async function POST(req: NextRequest) {
   try {
@@ -7,6 +8,43 @@ export async function POST(req: NextRequest) {
     const { type, data } = event;
     const { broadcast_id: broadcastId, to } = data;
 
+    if (type === "domain.updated") {
+      const resendDomainId = data?.id;
+      const resendStatus = data?.status;
+
+      if (!resendDomainId) {
+        return NextResponse.json({ ok: true });
+      }
+
+      const domain = await prisma.domain.findFirst({
+        where: { resendId: resendDomainId },
+      });
+
+      if (!domain) {
+        return NextResponse.json({ ok: true });
+      }
+
+      const status = resendStatus === "verified" ? "verified" : "pending";
+
+      if (status === "verified" && domain.status !== "verified") {
+        await resend.domains.update({
+          id: resendDomainId,
+          openTracking: true,
+          clickTracking: true,
+        });
+      }
+
+      await prisma.domain.update({
+        where: { id: domain.id },
+        data: { status },
+      });
+
+      console.log(`Domain status updated → ${domain.domain}: ${status}`);
+
+      return NextResponse.json({ ok: true });
+    }
+
+    
     if (!broadcastId) {
       console.warn("Webhook: Missing broadcast_id");
       return NextResponse.json({ ok: true });
