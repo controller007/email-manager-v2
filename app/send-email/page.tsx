@@ -108,7 +108,7 @@ export default async function SendEmailPage() {
                 {/* No Senders */}
                 {senders.length === 0 && (
                   <div className="border rounded-lg p-6">
-                    <div className="flex items-start gap-4">
+                    <div className="flex items-start  gap-4">
                       <Globe className="h-8 w-8 text-gray-400 flex-shrink-0" />
                       <div className="flex-1">
                         <h3 className="font-semibold text-gray-900 mb-2">
