@@ -1,35 +1,39 @@
 // app/email-history/page.tsx
-import { requireAuth } from "@/app/_lib/auth/session"
-import DashboardLayout from "@/app/_components/dashboard-layout"
-import { EmailHistoryList } from "@/app/_components/email-history-list"
-import { EmailHistoryFilters } from "@/app/_components/email-history-filters"
-import { Button } from "@/app/_components/ui/button"
-import prisma from "@/app/_lib/db/prisma"
-import { Send } from "lucide-react"
-import Link from "next/link"
+import { requireAuth } from "@/app/_lib/auth/session";
+import DashboardLayout from "@/app/_components/dashboard-layout";
+import { EmailHistoryList } from "@/app/_components/email-history-list";
+import { EmailHistoryFilters } from "@/app/_components/email-history-filters";
+import { Button } from "@/app/_components/ui/button";
+import prisma from "@/app/_lib/db/prisma";
+import { Send } from "lucide-react";
+import Link from "next/link";
 
 interface SearchParams {
-  status?: string
-  search?: string
-  page?: string
+  status?: string;
+  search?: string;
+  page?: string;
 }
 
 async function getEmailHistory(userId: string, searchParams: SearchParams) {
-  const page = Number.parseInt(searchParams.page || "1")
-  const limit = 10
-  const offset = (page - 1) * limit
+  const page = Number.parseInt(searchParams.page || "1");
+  const limit = 10;
+  const offset = (page - 1) * limit;
 
-  const where: any = { userId }
+  const where: any = { userId };
 
   if (searchParams.status && searchParams.status !== "all") {
-    where.status = searchParams.status
+    where.status = searchParams.status;
   }
 
   if (searchParams.search) {
     where.OR = [
       { subject: { contains: searchParams.search, mode: "insensitive" } },
-      { contactList: { name: { contains: searchParams.search, mode: "insensitive" } } },
-    ]
+      {
+        contactList: {
+          name: { contains: searchParams.search, mode: "insensitive" },
+        },
+      },
+    ];
   }
 
   const [emailHistory, totalCount] = await Promise.all([
@@ -40,7 +44,7 @@ async function getEmailHistory(userId: string, searchParams: SearchParams) {
       skip: offset,
       include: {
         contactList: {
-          select: { 
+          select: {
             name: true,
             domain: {
               select: {
@@ -57,23 +61,24 @@ async function getEmailHistory(userId: string, searchParams: SearchParams) {
       },
     }),
     prisma.emailHistory.count({ where }),
-  ])
+  ]);
 
   return {
     emailHistory,
     totalCount,
     currentPage: page,
     totalPages: Math.ceil(totalCount / limit),
-  }
+  };
 }
 
 export default async function EmailHistoryPage({
   searchParams,
 }: {
-  searchParams: SearchParams
+  searchParams: SearchParams;
 }) {
-  const user = await requireAuth()
-  const { emailHistory, totalCount, currentPage, totalPages } = await getEmailHistory(user.id, searchParams)
+  const user = await requireAuth();
+  const { emailHistory, totalCount, currentPage, totalPages } =
+    await getEmailHistory(user.id, searchParams);
 
   return (
     <DashboardLayout>
@@ -81,7 +86,7 @@ export default async function EmailHistoryPage({
         {/* Header */}
         <div className="flex items-center justify-between">
           <div>
-            <h1 className="text-3xl font-bold text-gray-900">Email History</h1>
+            <h1 className="text-3xl  font-bold text-gray-900">Email History</h1>
             <p className="text-gray-600 mt-1">
               View and track all your email campaigns and their delivery status
             </p>
@@ -108,5 +113,5 @@ export default async function EmailHistoryPage({
         />
       </div>
     </DashboardLayout>
-  )
+  );
 }
