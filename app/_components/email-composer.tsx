@@ -1,3 +1,4 @@
+// app/_components/email-composer.tsx - UPDATED FOR BREVO
 "use client";
 
 import type React from "react";
@@ -24,12 +25,13 @@ import { Alert, AlertDescription } from "@/app/_components/ui/alert";
 import { Badge } from "@/app/_components/ui/badge";
 import RichTextEditor from "./rich-text-editor";
 import { emailComposeSchema } from "@/app/_lib/validations/email";
-import { AlertCircle, Send, Eye, Users, Mail, Globe } from "lucide-react";
+import { AlertCircle, Send, Eye, Users, Mail, Globe, Zap, Target } from "lucide-react";
 
 interface ContactList {
   id: string;
   name: string;
   emails: string[];
+  status: string;
   createdAt: Date;
   domain: {
     id: string;
@@ -60,6 +62,7 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
   const [body, setBody] = useState("");
   const [selectedListId, setSelectedListId] = useState("");
   const [selectedSenderId, setSelectedSenderId] = useState("");
+  const [sendMethod, setSendMethod] = useState<"transactional" | "campaign">("transactional");
   const [filteredSenders, setFilteredSenders] = useState<Sender[]>([]);
   const [error, setError] = useState("");
   const [success, setSuccess] = useState("");
@@ -68,9 +71,7 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
   const router = useRouter();
 
   const selectedList = contactLists.find((list) => list.id === selectedListId);
-  const selectedSender = filteredSenders.find(
-    (sender) => sender.id === selectedSenderId
-  );
+  const selectedSender = filteredSenders.find((sender) => sender.id === selectedSenderId);
 
   useEffect(() => {
     const preselectedListId = searchParams.get("listId") as string | undefined;
@@ -79,7 +80,6 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
     }
   }, [searchParams]);
 
-  // Filter senders based on selected contact list's domain
   useEffect(() => {
     if (selectedList) {
       const sendersForDomain = senders.filter(
@@ -87,17 +87,13 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
       );
       setFilteredSenders(sendersForDomain);
 
-      // Reset sender selection if current sender doesn't match domain
       if (selectedSenderId) {
-        const isSenderValid = sendersForDomain.some(
-          (s) => s.id === selectedSenderId
-        );
+        const isSenderValid = sendersForDomain.some((s) => s.id === selectedSenderId);
         if (!isSenderValid) {
           setSelectedSenderId("");
         }
       }
 
-      // Auto-select if only one sender available
       if (sendersForDomain.length === 1) {
         setSelectedSenderId(sendersForDomain[0].id);
       }
@@ -118,6 +114,7 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
         body: body.trim(),
         contactListId: selectedListId,
         senderId: selectedSenderId,
+        sendMethod,
       });
 
       if (!validationResult.success) {
@@ -140,7 +137,7 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
       }
 
       setSuccess(
-        `Email campaign sent successfully to ${result.recipientCount} recipients!`
+        `Email ${result.method === "campaign" ? "campaign" : "batch"} sent successfully to ${result.recipientCount} recipients!`
       );
       setSubject("");
       setBody("");
@@ -163,7 +160,6 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-      {/* Email Composer Form */}
       <div className="lg:col-span-2">
         <Card>
           <CardHeader>
@@ -184,13 +180,55 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
               {success && (
                 <Alert className="border-green-200 bg-green-50">
                   <Mail className="h-4 w-4 text-green-600" />
-                  <AlertDescription className="text-green-800">
-                    {success}
-                  </AlertDescription>
+                  <AlertDescription className="text-green-800">{success}</AlertDescription>
                 </Alert>
               )}
 
-              {/* Contact List Selection - FIRST */}
+              {/* Send Method Selection */}
+              <div className="space-y-2">
+                <Label>Sending Method *</Label>
+                <div className="grid grid-cols-2 gap-4">
+                  <Card
+                    className={`cursor-pointer transition-all ${
+                      sendMethod === "transactional"
+                        ? "border-blue-500 bg-blue-50"
+                        : "hover:border-gray-400"
+                    }`}
+                    onClick={() => setSendMethod("transactional")}
+                  >
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Zap className="h-5 w-5 text-blue-600" />
+                        <h3 className="font-semibold">Transactional</h3>
+                      </div>
+                      <p className="text-xs text-gray-600">
+                        Best inbox rates, faster delivery
+                      </p>
+                    </CardContent>
+                  </Card>
+
+                  <Card
+                    className={`cursor-pointer transition-all ${
+                      sendMethod === "campaign"
+                        ? "border-purple-500 bg-purple-50"
+                        : "hover:border-gray-400"
+                    }`}
+                    onClick={() => setSendMethod("campaign")}
+                  >
+                    <CardContent className="p-4">
+                      <div className="flex items-center gap-2 mb-2">
+                        <Target className="h-5 w-5 text-purple-600" />
+                        <h3 className="font-semibold">Marketing</h3>
+                      </div>
+                      <p className="text-xs text-gray-600">
+                        Advanced analytics & tracking
+                      </p>
+                    </CardContent>
+                  </Card>
+                </div>
+              </div>
+
+              {/* Contact List Selection */}
               <div className="space-y-2">
                 <Label htmlFor="contactList">To (Recipients) *</Label>
                 <Select
@@ -204,7 +242,7 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
                   </SelectTrigger>
                   <SelectContent>
                     {contactLists.map((list) => (
-                      <SelectItem key={list.id} value={list.id}>
+                      <SelectItem key={list.id} value={list.id} disabled={list.status !== "ready"}>
                         <div className="flex items-center gap-2">
                           <span>{list.name}</span>
                           <Badge variant="outline" className="text-xs">
@@ -213,31 +251,40 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
                           <Badge variant="secondary" className="text-xs">
                             {list.emails.length} contacts
                           </Badge>
+                          {list.status === "pending" && (
+                            <Badge variant="outline" className="text-xs text-yellow-600">
+                              Importing...
+                            </Badge>
+                          )}
+                          {list.status === "ready" && (
+                            <Badge variant="outline" className="text-xs text-green-600">
+                              Ready
+                            </Badge>
+                          )}
                         </div>
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                {selectedList && (
-                  <p className="text-sm text-gray-500">
-                    Linked to domain:{" "}
-                    <strong>{selectedList.domain.domain}</strong> •{" "}
-                    {selectedList.emails.length} recipient
-                    {selectedList.emails.length !== 1 ? "s" : ""}
-                  </p>
+                
+                {selectedList && selectedList.status !== "ready" && (
+                  <Alert>
+                    <AlertCircle className="h-4 w-4" />
+                    <AlertDescription>
+                      This contact list is still importing. Please wait for it to be ready.
+                    </AlertDescription>
+                  </Alert>
                 )}
               </div>
 
-              {/* Sender Selection - SECOND (filtered by contact list domain) */}
+              {/* Sender Selection */}
               <div className="space-y-2">
                 <Label htmlFor="sender">From (Sender) *</Label>
                 <Select
                   key={selectedSenderId}
                   value={selectedSenderId}
                   onValueChange={setSelectedSenderId}
-                  disabled={
-                    isLoading || !selectedListId || filteredSenders.length === 0
-                  }
+                  disabled={isLoading || !selectedListId || filteredSenders.length === 0}
                 >
                   <SelectTrigger>
                     <SelectValue
@@ -255,35 +302,12 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
                       <SelectItem key={sender.id} value={sender.id}>
                         <div className="flex items-center gap-2">
                           <span>{sender.name}</span>
-                          <span className="text-gray-500 text-xs">
-                            &lt;{sender.email}&gt;
-                          </span>
+                          <span className="text-gray-500 text-xs">&lt;{sender.email}&gt;</span>
                         </div>
                       </SelectItem>
                     ))}
                   </SelectContent>
                 </Select>
-                {selectedList && filteredSenders.length === 0 && (
-                  <Alert>
-                    <AlertCircle className="h-4 w-4" />
-                    <AlertDescription>
-                      No senders available for{" "}
-                      <strong>{selectedList.domain.domain}</strong>.
-                      <a
-                        href="/domains"
-                        className="ml-1 text-blue-600 hover:underline"
-                      >
-                        Add a sender →
-                      </a>
-                    </AlertDescription>
-                  </Alert>
-                )}
-                {selectedSender && (
-                  <p className="text-sm text-gray-500">
-                    Emails will be sent from: {selectedSender.name} &lt;
-                    {selectedSender.email}&gt;
-                  </p>
-                )}
               </div>
 
               {/* Subject Line */}
@@ -298,9 +322,7 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
                   disabled={isLoading}
                   maxLength={200}
                 />
-                <p className="text-sm text-gray-500">
-                  {subject.length}/200 characters
-                </p>
+                <p className="text-sm text-gray-500">{subject.length}/200 characters</p>
               </div>
 
               {/* Email Body */}
@@ -319,9 +341,7 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
                   type="button"
                   variant="outline"
                   onClick={togglePreview}
-                  disabled={
-                    !subject || !body || !selectedListId || !selectedSenderId
-                  }
+                  disabled={!subject || !body || !selectedListId || !selectedSenderId}
                 >
                   <Eye className="mr-2 h-4 w-4" />
                   {showPreview ? "Hide Preview" : "Preview Email"}
@@ -334,7 +354,8 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
                     !subject ||
                     !body ||
                     !selectedListId ||
-                    !selectedSenderId
+                    !selectedSenderId ||
+                    selectedList?.status !== "ready"
                   }
                   className="min-w-[120px]"
                 >
@@ -358,7 +379,6 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
 
       {/* Sidebar */}
       <div className="space-y-6">
-        {/* Domain Info */}
         {selectedList && (
           <Card>
             <CardHeader>
@@ -369,25 +389,26 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
                 <Globe className="h-4 w-4 text-gray-500" />
                 <div>
                   <p className="text-xs text-gray-500">Domain</p>
-                  <p className="text-sm font-medium">
-                    {selectedList.domain.domain}
-                  </p>
+                  <p className="text-sm font-medium">{selectedList.domain.domain}</p>
                 </div>
               </div>
               {selectedSender && (
                 <div className="pt-2 border-t">
                   <p className="text-xs text-gray-500 mb-1">From</p>
                   <p className="font-medium text-sm">{selectedSender.name}</p>
-                  <p className="text-xs text-gray-600">
-                    {selectedSender.email}
-                  </p>
+                  <p className="text-xs text-gray-600">{selectedSender.email}</p>
                 </div>
               )}
+              <div className="pt-2 border-t">
+                <p className="text-xs text-gray-500 mb-1">Method</p>
+                <Badge variant={sendMethod === "transactional" ? "default" : "secondary"}>
+                  {sendMethod === "transactional" ? "Transactional" : "Marketing Campaign"}
+                </Badge>
+              </div>
             </CardContent>
           </Card>
         )}
 
-        {/* Selected List Info */}
         {selectedList && (
           <Card>
             <CardHeader>
@@ -395,12 +416,9 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
             </CardHeader>
             <CardContent className="space-y-4">
               <div>
-                <h3 className="font-medium text-gray-900">
-                  {selectedList.name}
-                </h3>
+                <h3 className="font-medium text-gray-900">{selectedList.name}</h3>
                 <p className="text-sm text-gray-500">
-                  Created{" "}
-                  {new Date(selectedList.createdAt).toLocaleDateString()}
+                  Created {new Date(selectedList.createdAt).toLocaleDateString()}
                 </p>
               </div>
 
@@ -413,9 +431,7 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
               </div>
 
               <div className="space-y-2">
-                <Label className="text-sm font-medium">
-                  Sample Recipients:
-                </Label>
+                <Label className="text-sm font-medium">Sample Recipients:</Label>
                 <div className="space-y-1">
                   {selectedList.emails.slice(0, 5).map((email, index) => (
                     <p key={index} className="text-xs text-gray-600 truncate">
@@ -433,14 +449,11 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
           </Card>
         )}
 
-        {/* Email Preview */}
         {showPreview && subject && body && selectedSender && (
           <Card>
             <CardHeader>
               <CardTitle className="text-lg">Email Preview</CardTitle>
-              <CardDescription>
-                How your email will appear to recipients
-              </CardDescription>
+              <CardDescription>How your email will appear to recipients</CardDescription>
             </CardHeader>
             <CardContent>
               <div className="border rounded-lg p-4 bg-white">
@@ -459,26 +472,18 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
           </Card>
         )}
 
-        {/* Tips */}
         <Card>
           <CardHeader>
-            <CardTitle className="text-lg">Email Tips</CardTitle>
+            <CardTitle className="text-lg">Sending Methods</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3 text-sm text-gray-600">
             <div>
-              <h4 className="font-medium text-gray-900">Domain Matching</h4>
-              <p>
-                Sender email must match the contact list's domain for best
-                deliverability
-              </p>
+              <h4 className="font-medium text-gray-900">Transactional</h4>
+              <p>Higher inbox rates, immediate delivery. Best for time-sensitive emails.</p>
             </div>
             <div>
-              <h4 className="font-medium text-gray-900">Subject Line</h4>
-              <p>Keep it concise and compelling. Avoid spam trigger words.</p>
-            </div>
-            <div>
-              <h4 className="font-medium text-gray-900">Content</h4>
-              <p>Use clear formatting and include a call-to-action.</p>
+              <h4 className="font-medium text-gray-900">Marketing Campaign</h4>
+              <p>Advanced analytics, link tracking, and detailed engagement metrics.</p>
             </div>
           </CardContent>
         </Card>

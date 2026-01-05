@@ -55,7 +55,7 @@ interface EmailHistoryItem {
       emailHistory: number;
     };
   };
-  broadcastId: string | null;
+  campaignId: number | null;
 }
 
 interface EmailHistoryListProps {
@@ -357,11 +357,11 @@ export function EmailHistoryList({
                           </span>
                         </div>
                         
-                        {email.broadcastId && (
+                        {email.campaignId && (
                           <div className="flex items-center gap-1">
                             <Send className="h-4 w-4 text-green-600" />
-                            <span className="font-medium">Broadcast ID:</span>
-                            <span className="text-xs font-mono truncate">{email.broadcastId}</span>
+                            <span className="font-medium">Campaign ID:</span>
+                            <span className="text-xs font-mono truncate">{email.campaignId}</span>
                           </div>
                         )}
                       </div>

@@ -1,6 +1,4 @@
-// This is your Prisma schema file,
-// learn more about it in the docs: https://pris.ly/d/prisma-schema
-
+// schema.prisma - UPDATED
 generator client {
   provider = "prisma-client-js"
 }
@@ -22,7 +20,6 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  // Relations
   contactLists ContactList[]
   emailHistory EmailHistory[]
 
@@ -33,8 +30,10 @@ model ContactList {
   id         String   @id @default(auto()) @map("_id") @db.ObjectId
   name       String
   emails     String[]
-  audienceId String?
-  domainId   String   @db.ObjectId  // 👈 NEW: Required domain link
+  brevoListId Int?    // Brevo list ID
+  processId   Int?    // Import process ID from Brevo
+  status     String   @default("pending") // pending | ready | failed
+  domainId   String   @db.ObjectId
   createdBy  String   @db.ObjectId
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
@@ -49,9 +48,9 @@ model ContactList {
 model Domain {
   id           String        @id @default(auto()) @map("_id") @db.ObjectId
   domain       String        @unique
-  status       String        @default("pending")
+  status       String        @default("pending") // pending | verified | failed
   region       String        @default("us-east-1")
-  resendId     String?       @unique
+  brevoId      String?       @unique
   userId       String        @db.ObjectId
   createdAt    DateTime      @default(now())
   updatedAt    DateTime      @updatedAt
@@ -68,11 +67,14 @@ model EmailHistory {
   body           String
   contactListId  String   @db.ObjectId
   userId         String   @db.ObjectId
-  broadcastId    String?
+  campaignId     Int?     // Brevo campaign ID or transactional message ID
+  sendMethod     String   @default("transactional") // transactional | campaign
   sentCount      Int      @default(0)
   deliveredCount Int      @default(0)
   openedCount    Int      @default(0)
+  clickedCount   Int      @default(0)
   failedCount    Int      @default(0)
+  bouncedCount   Int      @default(0)
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
@@ -86,18 +88,19 @@ model EmailHistory {
 model EmailRecipientEvent {
   id             String       @id @default(auto()) @map("_id") @db.ObjectId
   emailHistoryId String       @db.ObjectId
-  emailHistory   EmailHistory @relation(fields: [emailHistoryId], references: [id])
+  emailHistory   EmailHistory @relation(fields: [emailHistoryId], references: [id], onDelete: Cascade)
   recipientEmail String
-  status         String
+  status         String       // delivered | opened | clicked | bounced | failed | soft_bounce | hard_bounce
   createdAt      DateTime     @default(now())
+
+  @@map("email_recipient_events")
 }
-
-
 
 model Sender {
   id        String   @id @default(auto()) @map("_id") @db.ObjectId
-  name      String // Display name (e.g., "Jake Clever")
-  email     String   @unique // Full email (e.g., "info@sender.com")
+  name      String
+  email     String   @unique
+  brevoId   Int?     // Brevo sender ID
   domainId  String   @db.ObjectId
   userId    String   @db.ObjectId
   isDefault Boolean  @default(false)

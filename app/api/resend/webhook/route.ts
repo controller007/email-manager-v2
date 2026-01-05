@@ -1,126 +1,144 @@
+// app/api/webhooks/brevo/route.ts - BREVO WEBHOOK HANDLER
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/app/_lib/db/prisma";
-import { resend } from "@/app/_lib/email/resend-client";
+import type { BrevoWebhookEvent } from "@/types/brevo";
 
 export async function POST(req: NextRequest) {
   try {
-    const event = await req.json();
-    const { type, data } = event;
-    const { broadcast_id: broadcastId, to } = data;
+    const event: BrevoWebhookEvent = await req.json();
+    const { event: eventType, email, tag, campaign_id } = event;
 
-    if (type === "domain.updated") {
-      const resendDomainId = data?.id;
-      const resendStatus = data?.status;
+    console.log("Brevo webhook received:", eventType, { email, tag, campaign_id });
 
-      if (!resendDomainId) {
-        return NextResponse.json({ ok: true });
-      }
-
-      const domain = await prisma.domain.findFirst({
-        where: { resendId: resendDomainId },
-      });
-
-      if (!domain) {
-        return NextResponse.json({ ok: true });
-      }
-
-      const status = resendStatus === "verified" ? "verified" : "pending";
-
-      if (status === "verified" && domain.status !== "verified") {
-        await resend.domains.update({
-          id: resendDomainId,
-          openTracking: true,
-          clickTracking: true,
-        });
-      }
-
-      await prisma.domain.update({
-        where: { id: domain.id },
-        data: { status },
-      });
-
-      console.log(`Domain status updated → ${domain.domain}: ${status}`);
-
-      return NextResponse.json({ ok: true });
-    }
-
+    // Extract emailHistoryId from tag (format: "history-{id}")
+    let emailHistoryId: string | undefined;
     
-    if (!broadcastId) {
-      console.warn("Webhook: Missing broadcast_id");
+    if (tag) {
+      const match = tag.match(/history-(.+)/);
+      emailHistoryId = match?.[1];
+    }
+
+    // If campaign, find by campaignId
+    if (!emailHistoryId && campaign_id) {
+      const emailHistory = await prisma.emailHistory.findFirst({
+        where: { campaignId: campaign_id },
+      });
+      emailHistoryId = emailHistory?.id;
+    }
+
+    if (!emailHistoryId) {
+      console.warn("Brevo webhook: No emailHistoryId found");
       return NextResponse.json({ ok: true });
     }
 
-    const emailHistory = await prisma.emailHistory.findFirst({
-      where: { broadcastId },
+    const emailHistory = await prisma.emailHistory.findUnique({
+      where: { id: emailHistoryId },
     });
 
     if (!emailHistory) {
-      console.warn(`Webhook: No EmailHistory found for id ${broadcastId}`);
+      console.warn(`Brevo webhook: EmailHistory not found for ${emailHistoryId}`);
       return NextResponse.json({ ok: true });
     }
 
     let updateData: Record<string, any> = {};
     let recipientStatus = "";
 
-    switch (type) {
-      case "email.delivered":
+    // Map Brevo events to our status
+    switch (eventType) {
+      case "delivered":
+      case "request":
         updateData = { deliveredCount: { increment: 1 } };
         recipientStatus = "delivered";
         break;
-      case "email.opened":
+
+      case "opened":
+      case "open":
+      case "unique_opened":
         updateData = { openedCount: { increment: 1 } };
         recipientStatus = "opened";
         break;
-      case "email.clicked":
-        updateData = { openedCount: { increment: 1 } };
+
+      case "clicked":
+      case "click":
+      case "unique_clicked":
+        updateData = { clickedCount: { increment: 1 } };
         recipientStatus = "clicked";
         break;
-      case "email.bounced":
-      case "email.failed":
+
+      case "hard_bounce":
+        updateData = { bouncedCount: { increment: 1 }, failedCount: { increment: 1 } };
+        recipientStatus = "hard_bounce";
+        break;
+
+      case "soft_bounce":
+        updateData = { bouncedCount: { increment: 1 } };
+        recipientStatus = "soft_bounce";
+        break;
+
+      case "blocked":
+      case "error":
+      case "invalid_email":
         updateData = { failedCount: { increment: 1 } };
         recipientStatus = "failed";
         break;
+
+      case "unsubscribed":
+        recipientStatus = "unsubscribed";
+        break;
+
+      case "complaint":
+      case "spam":
+        updateData = { failedCount: { increment: 1 } };
+        recipientStatus = "spam";
+        break;
+
       default:
-        console.log("Unhandled event type:", type);
+        console.log("Unhandled Brevo event type:", eventType);
         return NextResponse.json({ ok: true });
     }
 
-    const recipientEmail = Array.isArray(to) ? to[0] : to;
+    if (!email) {
+      console.warn("Brevo webhook: No email found in event");
+      return NextResponse.json({ ok: true });
+    }
 
+    // Check for duplicate event
     const existingEvent = await prisma.emailRecipientEvent.findFirst({
       where: {
         emailHistoryId: emailHistory.id,
-        recipientEmail,
+        recipientEmail: email,
         status: recipientStatus,
       },
     });
 
-    if (!existingEvent) {
+    if (!existingEvent && recipientStatus) {
       await prisma.emailRecipientEvent.create({
         data: {
           emailHistoryId: emailHistory.id,
-          recipientEmail,
+          recipientEmail: email,
           status: recipientStatus,
         },
       });
 
-      await prisma.emailHistory.update({
-        where: { id: emailHistory.id },
-        data: updateData,
-      });
+      if (Object.keys(updateData).length > 0) {
+        await prisma.emailHistory.update({
+          where: { id: emailHistory.id },
+          data: updateData,
+        });
+      }
 
       console.log(
-        `Webhook logged (broadcastId=${broadcastId}, email=${recipientEmail}) → ${recipientStatus}`
+        `Brevo webhook logged (historyId=${emailHistoryId}, email=${email}) → ${recipientStatus}`
       );
     } else {
       console.log(
-        `Webhook duplicate ignored (broadcastId=${broadcastId}, email=${recipientEmail}, status=${recipientStatus})`
+        `Brevo webhook duplicate ignored (historyId=${emailHistoryId}, email=${email}, status=${recipientStatus})`
       );
     }
 
     return NextResponse.json({ ok: true });
   } catch (err) {
-    console.error("Webhook error:", err);
+    console.error("Brevo webhook error:", err);
     return NextResponse.json({ error: "Webhook failed" }, { status: 500 });
   }
 }

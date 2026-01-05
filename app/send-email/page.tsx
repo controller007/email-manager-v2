@@ -17,6 +17,7 @@ async function getContactLists(userId: string) {
   return await prisma.contactList.findMany({
     where: {
       createdBy: userId,
+      status:"ready",
       emails: {
         isEmpty: false,
       },
@@ -25,6 +26,7 @@ async function getContactLists(userId: string) {
       id: true,
       name: true,
       emails: true,
+      status: true,
       createdAt: true,
       domain: {
         select: {

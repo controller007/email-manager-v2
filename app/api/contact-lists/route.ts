@@ -1,13 +1,9 @@
+// app/api/contact-lists/route.ts - UPDATED FOR BREVO
 import { type NextRequest, NextResponse } from "next/server";
 import { getSession, requireAuth } from "@/app/_lib/auth/session";
 import { contactListSchema } from "@/app/_lib/validations/email";
 import prisma from "@/app/_lib/db/prisma";
-import { resend } from "@/app/_lib/email/resend-client";
-import { revalidatePath } from "next/cache";
-
-function sleep(ms: number) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
+import { brevo } from "@/app/_lib/email/brevo-client";
 
 export async function POST(request: NextRequest) {
   try {
@@ -28,46 +24,44 @@ export async function POST(request: NextRequest) {
 
     const { name, emails, domainId } = validationResult.data;
 
-    // 1. Create Audience in Resend
-    const audience = await resend.audiences.create({
-      name,
-    });
+    // Create list in Brevo
+    const brevoList = await brevo.createList(name);
 
-    for (const email of emails) {
-      try {
-        const res = await resend.contacts.create({
-          email,
-          audienceId: audience.data?.id as string,
-        });
-
-        if (res.error) {
-          console.error(`Failed to add ${email}:`, res.error);
-        } else {
-          console.log(`Added ${email} to audience ${audience.data?.id}`);
-        }
-
-        // Wait 600ms between requests to stay under 2/sec
-        await sleep(600);
-      } catch (err) {
-        console.error(`Error adding ${email}:`, err);
-      }
-    }
-
+    // Create contact list in DB with pending status
     const contactList = await prisma.contactList.create({
       data: {
         name,
         emails,
         domainId,
         createdBy: session.user.id,
-        audienceId: audience.data?.id as string,
+        brevoListId: brevoList.body.id,
+        status: "pending",
       },
+    });
+
+    // Import contacts to Brevo with notify URL
+    const notifyUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/webhooks/brevo/import/${contactList.id}`;
+    console.log(notifyUrl);
+    
+    const contactsData = emails.map((email) => ({ email }));
+
+    const importResult = await brevo.importContacts(
+      contactsData,
+      [brevoList.body.id!],
+      notifyUrl
+    );
+
+    // Update with process ID
+    await prisma.contactList.update({
+      where: { id: contactList.id },
+      data: { processId: importResult.body.processId },
     });
 
     return NextResponse.json(contactList, { status: 201 });
   } catch (error) {
     console.error("Error creating contact list:", error);
     return NextResponse.json(
-      { error: "Internal server error" },
+      { error: error instanceof Error ? error.message : "Internal server error" },
       { status: 500 }
     );
   }
@@ -100,13 +94,10 @@ export async function GET(request: NextRequest) {
   }
 }
 
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-
 export async function DELETE(request: NextRequest) {
   try {
     const user = await requireAuth();
     const body = await request.json();
-
     const { ids } = body;
 
     if (!Array.isArray(ids) || ids.length === 0) {
@@ -116,31 +107,22 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    // Fetch all contact lists to verify ownership and get Resend info
     const contactLists = await prisma.contactList.findMany({
-      where: {
-        id: { in: ids },
-      },
+      where: { id: { in: ids } },
       include: {
         domain: true,
         emailHistory: {
-          select: {
-            id: true,
-          },
+          select: { id: true },
         },
       },
     });
 
-    // Verify all lists belong to the user
     const unauthorizedLists = contactLists.filter(
       (list) => list.createdBy !== user.id
     );
     if (unauthorizedLists.length > 0) {
       return NextResponse.json(
-        {
-          error:
-            "Unauthorized: You don't have permission to delete some of these lists",
-        },
+        { error: "Unauthorized: You don't have permission to delete some lists" },
         { status: 403 }
       );
     }
@@ -152,7 +134,6 @@ export async function DELETE(request: NextRequest) {
       );
     }
 
-    // Track deletion results
     const deletionResults = {
       totalLists: contactLists.length,
       successfulDeletes: 0,
@@ -160,64 +141,35 @@ export async function DELETE(request: NextRequest) {
       errors: [] as string[],
     };
 
-    // Delete contacts and audiences from Resend for each list
+    // Delete lists from Brevo
     for (const list of contactLists) {
       try {
-        if (list.audienceId) {
-          try {
-            await resend.contacts.remove({ audienceId: list.audienceId });
-
-            await resend.audiences.remove(list.audienceId);
-            console.log(`Deleted Resend audience: ${list.audienceId}`);
-          } catch (error) {
-            console.error(
-              `Failed to delete Resend  audience for list "${list.name}":`,
-              error
-            );
-            // Continue with database deletion even if Resend fails
-          }
+        if (list.brevoListId) {
+          await brevo.deleteList(list.brevoListId);
+          console.log(`Deleted Brevo list: ${list.brevoListId}`);
         }
-
         deletionResults.successfulDeletes++;
       } catch (error) {
         deletionResults.failedDeletes++;
-        const errorMsg =
-          error instanceof Error ? error.message : "Unknown error";
+        const errorMsg = error instanceof Error ? error.message : "Unknown error";
         deletionResults.errors.push(`List "${list.name}": ${errorMsg}`);
         console.error(`Error processing list "${list.name}":`, error);
       }
     }
 
-    // Get all email history IDs for these contact lists
     const emailHistoryIds = contactLists.flatMap((list) =>
       list.emailHistory.map((eh) => eh.id)
     );
 
-    // Delete in the correct order to respect foreign key constraints
-
-    // 1. Delete EmailRecipientEvent records first
     if (emailHistoryIds.length > 0) {
       await prisma.emailRecipientEvent.deleteMany({
-        where: {
-          emailHistoryId: { in: emailHistoryIds },
-        },
+        where: { emailHistoryId: { in: emailHistoryIds } },
       });
-      console.log(
-        `Deleted EmailRecipientEvent records for ${emailHistoryIds.length} email histories`
-      );
-    }
-
-    // 2. Delete EmailHistory records
-    if (emailHistoryIds.length > 0) {
       await prisma.emailHistory.deleteMany({
-        where: {
-          id: { in: emailHistoryIds },
-        },
+        where: { id: { in: emailHistoryIds } },
       });
-      console.log(`Deleted ${emailHistoryIds.length} EmailHistory records`);
     }
 
-    // 3. Finally, delete all contact lists from database
     await prisma.contactList.deleteMany({
       where: {
         id: { in: ids },
@@ -225,11 +177,6 @@ export async function DELETE(request: NextRequest) {
       },
     });
 
-    console.log(
-      `Bulk delete complete: ${deletionResults.successfulDeletes} successful, ${deletionResults.failedDeletes} failed`
-    );
-
-    revalidatePath("/");
     return NextResponse.json({
       success: true,
       message: `Successfully deleted ${contactLists.length} contact list(s)`,

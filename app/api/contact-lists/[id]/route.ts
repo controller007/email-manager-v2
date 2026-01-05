@@ -1,13 +1,10 @@
-// app/api/contact-lists/[id]/route.ts
+// app/api/contact-lists/[id]/route.ts - UPDATED FOR BREVO
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/app/_lib/auth/session";
 import prisma from "@/app/_lib/db/prisma";
 import { contactListSchema } from "@/app/_lib/validations/email";
-import { resend } from "@/app/_lib/email/resend-client";
+import { brevo } from "@/app/_lib/email/brevo-client";
 import { revalidatePath } from "next/cache";
-
-// Helper function to delay execution (for rate limiting)
-const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 export async function PUT(
   request: NextRequest,
@@ -17,7 +14,6 @@ export async function PUT(
     const user = await requireAuth();
     const body = await request.json();
 
-    // Validate input
     const validationResult = contactListSchema.safeParse(body);
     if (!validationResult.success) {
       return NextResponse.json(
@@ -28,7 +24,6 @@ export async function PUT(
 
     const { name, emails, domainId } = validationResult.data;
 
-    // Check if contact list exists and belongs to user
     const existingList = await prisma.contactList.findUnique({
       where: { id: params.id },
     });
@@ -44,7 +39,6 @@ export async function PUT(
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
 
-    // Check if a list with the same name exists (excluding current list)
     const duplicateName = await prisma.contactList.findFirst({
       where: {
         name,
@@ -60,7 +54,6 @@ export async function PUT(
       );
     }
 
-    // If domainId is provided, verify it exists and belongs to user
     if (domainId && domainId !== existingList.domainId) {
       const domain = await prisma.domain.findFirst({
         where: {
@@ -78,15 +71,44 @@ export async function PUT(
       }
     }
 
-    // Update contact list
-    const updatedList = await prisma.contactList.update({
+    // Re-import contacts if emails changed
+    if (JSON.stringify(emails.sort()) !== JSON.stringify(existingList.emails.sort())) {
+      if (existingList.brevoListId) {
+        const notifyUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/webhooks/brevo/import/${existingList.id}`;
+        const contactsData = emails.map((email) => ({ email }));
+
+        const importResult = await brevo.importContacts(
+          contactsData,
+          [existingList.brevoListId],
+          notifyUrl
+        );
+
+        await prisma.contactList.update({
+          where: { id: params.id },
+          data: {
+            name,
+            emails,
+            ...(domainId && { domainId }),
+            status: "pending",
+            processId: importResult.body.processId,
+            updatedAt: new Date(),
+          },
+        });
+      }
+    } else {
+      await prisma.contactList.update({
+        where: { id: params.id },
+        data: {
+          name,
+          emails,
+          ...(domainId && { domainId }),
+          updatedAt: new Date(),
+        },
+      });
+    }
+
+    const updatedList = await prisma.contactList.findUnique({
       where: { id: params.id },
-      data: {
-        name,
-        emails,
-        ...(domainId && { domainId }),
-        updatedAt: new Date(),
-      },
       include: {
         domain: {
           select: {
@@ -114,12 +136,9 @@ export async function DELETE(
   try {
     const user = await requireAuth();
 
-    // Check if contact list exists and belongs to user
     const existingList = await prisma.contactList.findUnique({
       where: { id: params.id },
-      include: {
-        domain: true,
-      },
+      include: { domain: true },
     });
 
     if (!existingList) {
@@ -133,22 +152,15 @@ export async function DELETE(
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
 
-   
-
-    // Delete audience from Resend if it exists
-    if (existingList.audienceId) {
+    if (existingList.brevoListId) {
       try {
-        await resend.contacts.remove({ audienceId: existingList.audienceId });
-
-        await resend.audiences.remove(existingList.audienceId);
-        console.log(`Deleted Resend audience: ${existingList.audienceId}`);
+        await brevo.deleteList(existingList.brevoListId);
+        console.log(`Deleted Brevo list: ${existingList.brevoListId}`);
       } catch (error) {
-        console.error("Failed to delete Resend audience:", error);
-        // Continue with database deletion even if Resend fails
+        console.error("Failed to delete Brevo list:", error);
       }
     }
 
-    // Delete contact list from database
     await prisma.contactList.delete({
       where: { id: params.id },
     });

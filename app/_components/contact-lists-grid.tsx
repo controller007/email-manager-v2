@@ -46,6 +46,7 @@ import {
   Filter,
   ChevronLeft,
   ChevronRight,
+  Clock,
 } from "lucide-react";
 import type { ContactList, Domain, Sender } from "@prisma/client";
 import Link from "next/link";
@@ -61,12 +62,15 @@ interface ContactListWithRelations extends ContactList {
 
 interface ContactListsGridProps {
   contactLists: ContactListWithRelations[];
-  domains:Domain[]
+  domains: Domain[];
 }
 
 const ITEMS_PER_PAGE = 9;
 
-export function ContactListsGrid({ contactLists,domains }: ContactListsGridProps) {
+export function ContactListsGrid({
+  contactLists,
+  domains,
+}: ContactListsGridProps) {
   const router = useRouter();
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -77,7 +81,7 @@ export function ContactListsGrid({ contactLists,domains }: ContactListsGridProps
   const [currentPage, setCurrentPage] = useState(1);
 
   // Get unique domains for filter
-  const uniqueDomains = domains.map(domain => domain?.domain) as string[];
+  const uniqueDomains = domains.map((domain) => domain?.domain) as string[];
 
   // Filter logic
   const filteredLists = contactLists.filter((list) => {
@@ -208,7 +212,11 @@ export function ContactListsGrid({ contactLists,domains }: ContactListsGridProps
 
         {/* Domain Filter */}
         {uniqueDomains.length > 0 && (
-          <Select key={domainFilter} value={domainFilter} onValueChange={handleDomainFilterChange}>
+          <Select
+            key={domainFilter}
+            value={domainFilter}
+            onValueChange={handleDomainFilterChange}
+          >
             <SelectTrigger className="w-full sm:w-[200px]">
               <Filter className="mr-2 h-4 w-4" />
               <SelectValue placeholder="Filter by domain" />
@@ -294,8 +302,39 @@ export function ContactListsGrid({ contactLists,domains }: ContactListsGridProps
                           <CheckCircle2 className="h-3 w-3 mr-1" />
                           Verified
                         </Badge>
+
+                        {list.status === "pending" && (
+                          <Badge
+                            variant="outline"
+                            className="text-xs bg-yellow-50 text-yellow-700 border-yellow-200"
+                          >
+                            <Clock className="h-3 w-3 mr-1" />
+                            Importing...
+                          </Badge>
+                        )}
+
+                        {list.status === "ready" && (
+                          <Badge
+                            variant="outline"
+                            className="text-xs bg-green-50 text-green-700 border-green-200"
+                          >
+                            <CheckCircle2 className="h-3 w-3 mr-1" />
+                            Ready
+                          </Badge>
+                        )}
+
+                        {list.status === "failed" && (
+                          <Badge
+                            variant="outline"
+                            className="text-xs bg-red-50 text-red-700 border-red-200"
+                          >
+                            <AlertCircle className="h-3 w-3 mr-1" />
+                            Failed
+                          </Badge>
+                        )}
                       </div>
                     </div>
+
                     <div className="flex items-center space-x-1 flex-shrink-0">
                       <EditContactListDialog contactList={list}>
                         <Button
@@ -424,12 +463,45 @@ export function ContactListsGrid({ contactLists,domains }: ContactListsGridProps
 
                   {/* Action Buttons */}
                   <div className="flex gap-2 pt-2">
-                    <Button asChild className="flex-1" size="sm">
-                      <Link href={`/send-email?listId=${list.id}`}>
+                    <Button
+                      asChild
+                      className="flex-1"
+                      size="sm"
+                      disabled={list.status !== "ready"}
+                    >
+                      <Link
+                        href={
+                          list.status === "ready"
+                            ? `/send-email?listId=${list.id}`
+                            : "#"
+                        }
+                      >
                         <Send className="h-4 w-4 mr-1" />
-                        Send Email
+                        {list.status === "ready" ? "Send Email" : "Not Ready"}
                       </Link>
                     </Button>
+                    {list.status === "pending" && (
+                      <div className="p-3 bg-yellow-50 rounded-lg border border-yellow-200 mt-3">
+                        <p className="text-xs font-medium text-yellow-700 mb-1">
+                          Import In Progress
+                        </p>
+                        <p className="text-xs text-yellow-600">
+                          Your contacts are being imported. This
+                          usually takes 1-2 minutes.
+                        </p>
+                      </div>
+                    )}
+                    {list.status === "failed" && (
+                      <div className="p-3 bg-red-50 rounded-lg border border-red-200 mt-3">
+                        <p className="text-xs font-medium text-red-700 mb-1">
+                          Import Failed
+                        </p>
+                        <p className="text-xs text-red-600">
+                          There was an error importing your contacts. Please try
+                          creating the list again.
+                        </p>
+                      </div>
+                    )}
                   </div>
                 </CardContent>
               </Card>
