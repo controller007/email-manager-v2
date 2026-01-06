@@ -39,13 +39,16 @@ async function brevoFetch(endpoint: string, options: RequestInit = {}) {
   }
 
   // Handle 204 No Content responses (empty body)
-  if (response.status === 204 || response.headers.get('content-length') === '0') {
+  if (
+    response.status === 204 ||
+    response.headers.get("content-length") === "0"
+  ) {
     return { success: true };
   }
 
   // Check if response has content before parsing
-  const contentType = response.headers.get('content-type');
-  if (contentType && contentType.includes('application/json')) {
+  const contentType = response.headers.get("content-type");
+  if (contentType && contentType.includes("application/json")) {
     return response.json();
   }
 
@@ -157,6 +160,7 @@ class BrevoClient {
   async sendTransactionalEmail(params: {
     sender: { name: string; email: string };
     to: Array<{ email: string; name?: string }>;
+    replyTo: { email: string; name?: string };
     subject: string;
     htmlContent: string;
     tags?: string[];
@@ -165,6 +169,7 @@ class BrevoClient {
     const sendSmtpEmail = new SibApiV3Sdk.SendSmtpEmail();
     sendSmtpEmail.sender = params.sender;
     sendSmtpEmail.to = params.to;
+    sendSmtpEmail.replyTo = params.replyTo;
     sendSmtpEmail.subject = params.subject;
     sendSmtpEmail.htmlContent = params.htmlContent;
     if (params.tags) sendSmtpEmail.tags = params.tags;
@@ -172,7 +177,7 @@ class BrevoClient {
 
     return await transactionalEmailsApi.sendTransacEmail(sendSmtpEmail);
   }
-  
+
   // ==========================================
   // EMAIL CAMPAIGNS (Marketing)
   // ==========================================
@@ -180,6 +185,8 @@ class BrevoClient {
     name: string;
     subject: string;
     sender: { name: string; email: string };
+        replyTo: { name: string; email: string };
+
     htmlContent: string;
     recipients: { listIds: number[] };
     scheduledAt?: string;
@@ -188,6 +195,7 @@ class BrevoClient {
     createEmailCampaign.name = params.name;
     createEmailCampaign.subject = params.subject;
     createEmailCampaign.sender = params.sender;
+    createEmailCampaign.replyTo = params.replyTo.email;
     createEmailCampaign.htmlContent = params.htmlContent;
     createEmailCampaign.recipients = params.recipients;
     if (params.scheduledAt)
@@ -196,12 +204,11 @@ class BrevoClient {
     return await emailCampaignsApi.createEmailCampaign(createEmailCampaign);
   }
 
-
-async sendEmailCampaignNow(campaignId: number) {
-  return brevoFetch(`/emailCampaigns/${campaignId}/sendNow`, {
-    method: "POST",
-  });
-}
+  async sendEmailCampaignNow(campaignId: number) {
+    return brevoFetch(`/emailCampaigns/${campaignId}/sendNow`, {
+      method: "POST",
+    });
+  }
 
   async getEmailCampaign(campaignId: number) {
     return await emailCampaignsApi.getEmailCampaign(campaignId);
@@ -315,19 +322,19 @@ async sendEmailCampaignNow(campaignId: number) {
     return brevoFetch(`/emailCampaigns/${campaignId}`);
   }
 
-  async  deleteEmailCampaignsBulk(campaignIds: number[]) {
+  async deleteEmailCampaignsBulk(campaignIds: number[]) {
     const results: {
       campaignId: number;
       success: boolean;
       error?: string;
     }[] = [];
-  
+
     for (const campaignId of campaignIds) {
       try {
         await brevoFetch(`/emailCampaigns/${campaignId}`, {
           method: "DELETE",
         });
-  
+
         results.push({
           campaignId,
           success: true,
@@ -340,11 +347,11 @@ async sendEmailCampaignNow(campaignId: number) {
         });
       }
     }
-  
+
     return {
       total: campaignIds.length,
-      deleted: results.filter(r => r.success).length,
-      failed: results.filter(r => !r.success).length,
+      deleted: results.filter((r) => r.success).length,
+      failed: results.filter((r) => !r.success).length,
       results,
     };
   }

@@ -1,4 +1,4 @@
-// app/api/send-email/route.ts - UPDATED FOR BREVO (BOTH METHODS)
+// app/api/send-email/route.ts - UPDATED FOR INDIVIDUAL SENDING
 import { type NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/app/_lib/auth/session";
 import { emailComposeSchema } from "@/app/_lib/validations/email";
@@ -86,7 +86,7 @@ export async function POST(request: NextRequest) {
     const senderInfo = { name: sender.name, email: sender.email };
 
     let campaignId: number | undefined;
-    let messageId: string | undefined;
+    const messageIds: string[] = [];
 
     if (sendMethod === "campaign") {
       // METHOD 1: Marketing Campaign
@@ -94,6 +94,7 @@ export async function POST(request: NextRequest) {
         name: `Campaign-${emailHistory.id}`,
         subject,
         sender: senderInfo,
+        replyTo: senderInfo,
         htmlContent,
         recipients: { listIds: [contactList.brevoListId] },
       });
@@ -102,7 +103,7 @@ export async function POST(request: NextRequest) {
 
       const res = await brevo.sendEmailCampaignNow(campaign.body.id!);
       console.log(res);
-      console.log("it worked o so why issue");
+      console.log("Campaign sent successfully");
 
       await prisma.emailHistory.update({
         where: { id: emailHistory.id },
@@ -120,46 +121,61 @@ export async function POST(request: NextRequest) {
         method: "campaign",
       });
     } else {
-      // METHOD 2: Transactional Email (Batch sending)
-      const recipients = contactList.emails.map((email) => ({ email }));
+      // METHOD 2: Transactional Email (INDIVIDUAL SENDING)
+      // Send one email at a time to make it look personal
+      
+      let successCount = 0;
+      let failureCount = 0;
+      const errors: Array<{ email: string; error: string }> = [];
 
-      // Brevo allows up to 1000 recipients per transactional email
-      const batchSize = 1000;
-      const batches = [];
+      for (const email of contactList.emails) {
+        try {
+          const result = await brevo.sendTransactionalEmail({
+            sender: senderInfo,
+            to: [{ email }], // Only ONE recipient per email
+            replyTo: senderInfo,
+            subject,
+            htmlContent,
+            tags: [`history-${emailHistory.id}`],
+          });
 
-      for (let i = 0; i < recipients.length; i += batchSize) {
-        batches.push(recipients.slice(i, i + batchSize));
+          if (result.body.messageId) {
+            messageIds.push(result.body.messageId);
+            successCount++;
+          }
+
+          // Optional: Add a small delay between sends to avoid rate limiting
+          // Uncomment if you experience rate limit issues
+          // await new Promise(resolve => setTimeout(resolve, 100)); // 100ms delay
+          
+        } catch (error) {
+          console.error(`Failed to send to ${email}:`, error);
+          failureCount++;
+          errors.push({
+            email,
+            error: error instanceof Error ? error.message : "Unknown error",
+          });
+        }
       }
-
-      const results = [];
-      for (const batch of batches) {
-        const result = await brevo.sendTransactionalEmail({
-          sender: senderInfo,
-          to: batch,
-          subject,
-          htmlContent,
-          tags: [`history-${emailHistory.id}`],
-        });
-        results.push(result);
-      }
-
-      messageId = results[0]?.body.messageId;
 
       await prisma.emailHistory.update({
         where: { id: emailHistory.id },
         data: {
-          campaignId: messageId ? parseInt(messageId) : undefined,
-          sentCount: contactList.emails.length,
+          campaignId: messageIds[0] ? parseInt(messageIds[0]) : undefined,
+          sentCount: successCount,
         },
       });
 
       return NextResponse.json({
         success: true,
         emailHistoryId: emailHistory.id,
-        messageId,
+        messageIds,
         recipientCount: contactList.emails.length,
+        successCount,
+        failureCount,
         method: "transactional",
-        batches: results.length,
+        individualSends: true,
+        errors: errors.length > 0 ? errors : undefined,
       });
     }
   } catch (error) {
