@@ -58,7 +58,7 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json(contactList, { status: 201 });
   } catch (error) {
-    console.error("Error creating contact  list:", error);
+    console.error("Error creating contact list:", error);
     return NextResponse.json(
       {
         error: error instanceof Error ? error.message : "Internal server error",
