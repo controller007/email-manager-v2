@@ -10,13 +10,13 @@ contactsApi.setApiKey(SibApiV3Sdk.ContactsApiApiKeys.apiKey, BREVO_API_KEY);
 const transactionalEmailsApi = new SibApiV3Sdk.TransactionalEmailsApi();
 transactionalEmailsApi.setApiKey(
   SibApiV3Sdk.TransactionalEmailsApiApiKeys.apiKey,
-  BREVO_API_KEY
+  BREVO_API_KEY,
 );
 
 const emailCampaignsApi = new SibApiV3Sdk.EmailCampaignsApi();
 emailCampaignsApi.setApiKey(
   SibApiV3Sdk.EmailCampaignsApiApiKeys.apiKey,
-  BREVO_API_KEY
+  BREVO_API_KEY,
 );
 
 const sendersApi = new SibApiV3Sdk.SendersApi();
@@ -60,36 +60,36 @@ class BrevoClient {
   // ==========================================
   // CONTACT LISTS
   // ==========================================
-  async createList(name: string, folderId?: number) {
+
+  // async deleteAllFolders() {
+  //   try {
+  //     const foldersResponse = await contactsApi.getFolders(50, 0);
+  //     const folders = foldersResponse.body.folders || [];
+
+  //     for (const folder of folders) {
+  //       console.log("deleting folder", folder.id);
+
+  //       await contactsApi.deleteFolder(folder.id);
+  //     }
+
+  //     console.log("All folders deleted successfully");
+  //   } catch (error) {
+  //     console.error("Error deleting folders:", error);
+  //     throw error;
+  //   }
+  // }
+
+  async createList(name: string, folderId: number) {
     let finalFolderId = folderId;
 
-    if (!finalFolderId) {
-      try {
-        const createFolder = new SibApiV3Sdk.CreateUpdateFolder();
-        createFolder.name = name;
-        const folderResponse = await contactsApi.createFolder(createFolder);
-        finalFolderId = folderResponse.body.id;
-      } catch (error: any) {
-        if (error.response?.status === 400 || error.response?.status === 409) {
-          const folders = await contactsApi.getFolders(50, 0);
-          const existingFolder = folders.body.folders?.find(
-            (f) => f.name === name
-          );
 
-          if (existingFolder) {
-            finalFolderId = existingFolder.id;
-          } else {
-            throw error; // Re-throw if it's a different error
-          }
-        } else {
-          throw error;
-        }
-      }
-    }
 
     const createList = new SibApiV3Sdk.CreateList();
     createList.name = name;
     createList.folderId = finalFolderId;
+
+    console.log(finalFolderId);
+    
 
     return await contactsApi.createList(createList);
   }
@@ -112,7 +112,7 @@ class BrevoClient {
   async importContacts(
     contacts: Array<{ email: string; attributes?: Record<string, any> }>,
     listIds: number[],
-    notifyUrl: string
+    notifyUrl: string,
   ) {
     const requestContactImport = new SibApiV3Sdk.RequestContactImport();
     requestContactImport.jsonBody = contacts;
@@ -130,7 +130,7 @@ class BrevoClient {
   async createContact(
     email: string,
     attributes?: Record<string, any>,
-    listIds?: number[]
+    listIds?: number[],
   ) {
     const createContact = new SibApiV3Sdk.CreateContact();
     createContact.email = email;
@@ -185,7 +185,7 @@ class BrevoClient {
     name: string;
     subject: string;
     sender: { name: string; email: string };
-        replyTo: { name: string; email: string };
+    replyTo: { name: string; email: string };
 
     htmlContent: string;
     recipients: { listIds: number[] };
@@ -235,7 +235,7 @@ class BrevoClient {
 
   async updateSender(
     senderId: number,
-    params: { name?: string; email?: string }
+    params: { name?: string; email?: string },
   ) {
     const updateSender = new SibApiV3Sdk.UpdateSender();
     if (params.name) updateSender.name = params.name;
@@ -314,7 +314,7 @@ class BrevoClient {
     tag?: string;
   }) {
     return brevoFetch(
-      `/smtp/statistics/events?${new URLSearchParams(params as any).toString()}`
+      `/smtp/statistics/events?${new URLSearchParams(params as any).toString()}`,
     );
   }
 

@@ -1,4 +1,3 @@
-// app/api/contact-lists/route.ts - UPDATED FOR BREVO
 import { type NextRequest, NextResponse } from "next/server";
 import { getSession, requireAuth } from "@/app/_lib/auth/session";
 import { contactListSchema } from "@/app/_lib/validations/email";
@@ -18,14 +17,14 @@ export async function POST(request: NextRequest) {
     if (!validationResult.success) {
       return NextResponse.json(
         { error: validationResult.error.errors[0].message },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
     const { name, emails, domainId } = validationResult.data;
 
     // Create list in Brevo
-    const brevoList = await brevo.createList(name);
+    const brevoList = await brevo.createList(name, 601);
 
     // Create contact list in DB with pending status
     const contactList = await prisma.contactList.create({
@@ -42,13 +41,13 @@ export async function POST(request: NextRequest) {
     // Import contacts to Brevo with notify URL
     const notifyUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/webhooks/brevo/import/${contactList.id}`;
     console.log(notifyUrl);
-    
+
     const contactsData = emails.map((email) => ({ email }));
 
     const importResult = await brevo.importContacts(
       contactsData,
       [brevoList.body.id!],
-      notifyUrl
+      notifyUrl,
     );
 
     // Update with process ID
@@ -61,8 +60,10 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("Error creating contact list:", error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : "Internal server error" },
-      { status: 500 }
+      {
+        error: error instanceof Error ? error.message : "Internal server error",
+      },
+      { status: 500 },
     );
   }
 }
@@ -89,7 +90,7 @@ export async function GET(request: NextRequest) {
     console.error("Error fetching contact lists:", error);
     return NextResponse.json(
       { error: "Internal server error" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
@@ -103,7 +104,7 @@ export async function DELETE(request: NextRequest) {
     if (!Array.isArray(ids) || ids.length === 0) {
       return NextResponse.json(
         { error: "Invalid request: ids must be a non-empty array" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -118,19 +119,21 @@ export async function DELETE(request: NextRequest) {
     });
 
     const unauthorizedLists = contactLists.filter(
-      (list) => list.createdBy !== user.id
+      (list) => list.createdBy !== user.id,
     );
     if (unauthorizedLists.length > 0) {
       return NextResponse.json(
-        { error: "Unauthorized: You don't have permission to delete some lists" },
-        { status: 403 }
+        {
+          error: "Unauthorized: You don't have permission to delete some lists",
+        },
+        { status: 403 },
       );
     }
 
     if (contactLists.length !== ids.length) {
       return NextResponse.json(
         { error: "Some contact lists were not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
@@ -151,14 +154,15 @@ export async function DELETE(request: NextRequest) {
         deletionResults.successfulDeletes++;
       } catch (error) {
         deletionResults.failedDeletes++;
-        const errorMsg = error instanceof Error ? error.message : "Unknown error";
+        const errorMsg =
+          error instanceof Error ? error.message : "Unknown error";
         deletionResults.errors.push(`List "${list.name}": ${errorMsg}`);
         console.error(`Error processing list "${list.name}":`, error);
       }
     }
 
     const emailHistoryIds = contactLists.flatMap((list) =>
-      list.emailHistory.map((eh) => eh.id)
+      list.emailHistory.map((eh) => eh.id),
     );
 
     if (emailHistoryIds.length > 0) {
@@ -186,7 +190,7 @@ export async function DELETE(request: NextRequest) {
     console.error("Error during bulk delete:", error);
     return NextResponse.json(
       { error: "Failed to delete contact lists" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
