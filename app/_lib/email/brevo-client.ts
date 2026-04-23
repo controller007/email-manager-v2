@@ -79,19 +79,43 @@ class BrevoClient {
   //   }
   // }
 
-  async createList(name: string, folderId: number) {
-    let finalFolderId = folderId;
+  async createList(name: string) {
+    try {
+      let targetFolderId: number;
 
+      // 1. Fetch existing folders (limit to 10 to keep it fast)
+      const foldersResponse = await contactsApi.getFolders(10, 0);
+      const folders = foldersResponse.body.folders || [];
 
+      if (folders.length > 0) {
+        // Sort by ID descending to get the newest one created
+        const latestFolder = folders.sort(
+          (a, b) => (b.id || 0) - (a.id || 0),
+        )[0];
+        targetFolderId = latestFolder.id!;
+        console.log(
+          `Using existing folder: ${latestFolder.name} (ID: ${targetFolderId})`,
+        );
+      } else {
+        // 2. If no folders exist, create a default one
+        console.log("No folders found. Creating 'General Lists' folder...");
+        const createFolder = new SibApiV3Sdk.CreateUpdateFolder();
+        createFolder.name = "General Lists";
 
-    const createList = new SibApiV3Sdk.CreateList();
-    createList.name = name;
-    createList.folderId = finalFolderId;
+        const newFolderRes = await contactsApi.createFolder(createFolder);
+        targetFolderId = newFolderRes.body.id!;
+      }
 
-    console.log(finalFolderId);
-    
+      // 3. Create the list in the identified folder
+      const createListParams = new SibApiV3Sdk.CreateList();
+      createListParams.name = name;
+      createListParams.folderId = targetFolderId;
 
-    return await contactsApi.createList(createList);
+      return await contactsApi.createList(createListParams);
+    } catch (error: any) {
+      console.error("Error in dynamic createList:", error);
+      throw error;
+    }
   }
 
   async deleteList(listId: number) {
