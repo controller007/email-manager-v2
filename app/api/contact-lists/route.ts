@@ -26,7 +26,7 @@ export async function POST(request: NextRequest) {
     // Create list in Brevo
     const brevoList = await brevo.createList(name);
 
-    // Create contact list in DB with pending status
+    // Create contact list  in DB with pending status
     const contactList = await prisma.contactList.create({
       data: {
         name,
