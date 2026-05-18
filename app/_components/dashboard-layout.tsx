@@ -1,25 +1,16 @@
-"use client"
+import { Sidebar } from "./sidebar";
 
-import type React from "react"
-
-import { SessionProvider } from "next-auth/react"
-import { Sidebar } from "./sidebar"
-
-interface DashboardLayoutProps {
-  children: React.ReactNode
-}
-
-const DashboardLayout = ({ children }: DashboardLayoutProps) => {
+export default function DashboardLayout({
+  children,
+}: {
+  children: React.ReactNode;
+}) {
   return (
-    <SessionProvider>
-      <div className="flex h-screen bg-gray-50">
-        <Sidebar />
-        <main className="flex-1 overflow-auto">
-          <div className="p-8">{children}</div>
-        </main>
-      </div>
-    </SessionProvider>
-  )
+    <div className="flex h-screen overflow-hidden bg-gray-50">
+      <Sidebar />
+      <main className="flex-1 overflow-y-auto">
+        <div className="p-6 lg:p-8">{children}</div>
+      </main>
+    </div>
+  );
 }
-
-export default DashboardLayout

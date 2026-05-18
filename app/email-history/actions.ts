@@ -17,7 +17,7 @@ export async function deleteEmailHistory(id: string) {
     })
   })
 
-  revalidatePath("/email-history")
+  revalidatePath("/")
 }
 
 export async function deleteManyEmailHistories(ids: string[]) {
@@ -32,7 +32,7 @@ export async function deleteManyEmailHistories(ids: string[]) {
     })
   })
 
-  revalidatePath("/email-history")
+  revalidatePath("/")
 }
 
 export async function clearAllEmailHistories() {
@@ -49,5 +49,5 @@ export async function clearAllEmailHistories() {
     })
   })
 
-  revalidatePath("/email-history")
+  revalidatePath("/")
 }

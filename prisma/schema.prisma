@@ -1,4 +1,4 @@
-// schema.prisma - UPDATED
+// schema.prisma
 generator client {
   provider = "prisma-client-js"
 }
@@ -20,63 +20,94 @@ model User {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  contactLists ContactList[]
-  emailHistory EmailHistory[]
+  contactLists   ContactList[]
+  emailHistory   EmailHistory[]
+  suppressions   EmailSuppression[]
+  emailTemplates EmailTemplate[]
 
   @@map("users")
 }
 
 model ContactList {
-  id         String   @id @default(auto()) @map("_id") @db.ObjectId
-  name       String
-  emails     String[]
-  brevoListId Int?    // Brevo list ID
-  processId   Int?    // Import process ID from Brevo
-  status     String   @default("pending") // pending | ready | failed
-  domainId   String   @db.ObjectId
-  createdBy  String   @db.ObjectId
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
-  
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  description String?
+  emails      String[] // kept in sync with Contact records for backward compat
+  status      String   @default("ready")
+  domainId    String   @db.ObjectId
+  createdBy   String   @db.ObjectId
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
   user         User           @relation(fields: [createdBy], references: [id], onDelete: Cascade)
   domain       Domain         @relation(fields: [domainId], references: [id], onDelete: Cascade)
   emailHistory EmailHistory[]
-  
+  contacts     Contact[]
+
   @@map("contact_lists")
 }
 
+model Contact {
+  id            String   @id @default(auto()) @map("_id") @db.ObjectId
+  email         String
+  firstName     String?
+  lastName      String?
+  company       String?
+  phone         String?
+  tags          String[]
+  customFields  Json?
+  isSubscribed  Boolean  @default(true)
+  isComplained  Boolean  @default(false)
+  isBounced     Boolean  @default(false)
+  contactListId String   @db.ObjectId
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  contactList ContactList @relation(fields: [contactListId], references: [id], onDelete: Cascade)
+
+  @@unique([email, contactListId])
+  @@map("contacts")
+}
+
 model Domain {
-  id           String        @id @default(auto()) @map("_id") @db.ObjectId
-  domain       String        @unique
-  status       String        @default("pending") // pending | verified | failed
-  region       String        @default("us-east-1")
-  brevoId      String?       @unique
-  userId       String        @db.ObjectId
-  createdAt    DateTime      @default(now())
-  updatedAt    DateTime      @updatedAt
-  
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  domain    String   @unique
+  status    String   @default("pending") // pending | verified | failed
+  region    String   @default("us-east-1")
+  resendId  String?  @unique
+  userId    String   @db.ObjectId
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
   senders      Sender[]
   contactLists ContactList[]
-  
+
   @@map("domains")
 }
 
 model EmailHistory {
-  id             String   @id @default(auto()) @map("_id") @db.ObjectId
-  subject        String
-  body           String
-  contactListId  String   @db.ObjectId
-  userId         String   @db.ObjectId
-  campaignId     Int?     // Brevo campaign ID or transactional message ID
-  sendMethod     String   @default("transactional") // transactional | campaign
-  sentCount      Int      @default(0)
-  deliveredCount Int      @default(0)
-  openedCount    Int      @default(0)
-  clickedCount   Int      @default(0)
-  failedCount    Int      @default(0)
-  bouncedCount   Int      @default(0)
-  createdAt      DateTime @default(now())
-  updatedAt      DateTime @updatedAt
+  id                String   @id @default(auto()) @map("_id") @db.ObjectId
+  subject           String
+  body              String
+  preheader         String?
+  contactListId     String   @db.ObjectId
+  userId            String   @db.ObjectId
+  senderId          String?  @db.ObjectId
+  senderEmail       String?
+  senderName        String?
+  sendMethod        String   @default("batch")
+  status            String   @default("sent") // sending | sent | failed
+  batchIds          String[]
+  sentCount         Int      @default(0)
+  deliveredCount    Int      @default(0)
+  openedCount       Int      @default(0)
+  clickedCount      Int      @default(0)
+  failedCount       Int      @default(0)
+  bouncedCount      Int      @default(0)
+  complainedCount   Int      @default(0)
+  unsubscribedCount Int      @default(0)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   contactList     ContactList           @relation(fields: [contactListId], references: [id], onDelete: Cascade)
   user            User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -86,21 +117,35 @@ model EmailHistory {
 }
 
 model EmailRecipientEvent {
-  id             String       @id @default(auto()) @map("_id") @db.ObjectId
-  emailHistoryId String       @db.ObjectId
-  emailHistory   EmailHistory @relation(fields: [emailHistoryId], references: [id], onDelete: Cascade)
-  recipientEmail String
-  status         String       // delivered | opened | clicked | bounced | failed | soft_bounce | hard_bounce
-  createdAt      DateTime     @default(now())
+  id              String   @id @default(auto()) @map("_id") @db.ObjectId
+  emailHistoryId  String   @db.ObjectId
+  recipientEmail  String
+  status          String // sent | delivered | opened | clicked | bounced | failed | complained | unsubscribed
+  clickedUrl      String?
+  resendMessageId String?
+  createdAt       DateTime @default(now())
+
+  emailHistory EmailHistory @relation(fields: [emailHistoryId], references: [id], onDelete: Cascade)
 
   @@map("email_recipient_events")
+}
+
+model EmailSuppression {
+  id        String   @id @default(auto()) @map("_id") @db.ObjectId
+  email     String   @unique
+  reason    String // bounced | complained | unsubscribed
+  userId    String   @db.ObjectId
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("email_suppressions")
 }
 
 model Sender {
   id        String   @id @default(auto()) @map("_id") @db.ObjectId
   name      String
   email     String   @unique
-  brevoId   Int?     // Brevo sender ID
   domainId  String   @db.ObjectId
   userId    String   @db.ObjectId
   isDefault Boolean  @default(false)
@@ -110,4 +155,22 @@ model Sender {
   domain Domain @relation(fields: [domainId], references: [id], onDelete: Cascade)
 
   @@map("senders")
+}
+
+// ── Email Templates ───────────────────────────────────────────────────────────
+model EmailTemplate {
+  id          String   @id @default(auto()) @map("_id") @db.ObjectId
+  name        String
+  description String?
+  subject     String? // optional default subject
+  body        String // HTML content
+  category    String   @default("custom") // custom | newsletter | promo | welcome | announcement | transactional
+  isBuiltIn   Boolean  @default(false) // true = shipped with app, false = user-created
+  userId      String   @db.ObjectId
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("email_templates")
 }

@@ -1,8 +1,12 @@
-// app/api/send-email/route.ts - UPDATED FOR INDIVIDUAL SENDING
+// app/api/send-email/route.ts
 import { type NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/app/_lib/auth/session";
 import { emailComposeSchema } from "@/app/_lib/validations/email";
-import { brevo, generateEmailTemplate } from "@/app/_lib/email/brevo-client";
+import {
+  sendBatch,
+  generateEmailTemplate,
+  replaceVariables,
+} from "@/app/_lib/email/resend-client";
 import prisma from "@/app/_lib/db/prisma";
 
 export async function POST(request: NextRequest) {
@@ -18,7 +22,7 @@ export async function POST(request: NextRequest) {
     if (!validationResult.success) {
       return NextResponse.json(
         { error: validationResult.error.errors[0].message },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
@@ -27,8 +31,8 @@ export async function POST(request: NextRequest) {
       body: emailBody,
       contactListId,
       senderId,
-      sendMethod = "transactional",
-    } = validationResult.data as any;
+      preheader,
+    } = validationResult.data;
 
     // Get contact list
     const contactList = await prisma.contactList.findFirst({
@@ -38,27 +42,11 @@ export async function POST(request: NextRequest) {
     if (!contactList) {
       return NextResponse.json(
         { error: "Contact list not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
 
-    if (contactList.status !== "ready") {
-      return NextResponse.json(
-        {
-          error: "Contact list is not ready. Import may still be in progress.",
-        },
-        { status: 400 }
-      );
-    }
-
-    if (!contactList.brevoListId) {
-      return NextResponse.json(
-        { error: "Contact list not linked to Brevo" },
-        { status: 404 }
-      );
-    }
-
-    // Get sender details
+    // Get sender
     const sender = await prisma.sender.findFirst({
       where: { id: senderId, userId: session.user.id },
       include: { domain: true },
@@ -67,124 +55,151 @@ export async function POST(request: NextRequest) {
     if (!sender || sender.domain.status !== "verified") {
       return NextResponse.json(
         { error: "Sender not found or domain not verified" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
-    // Create email history
+    // Get sendable contacts — prefer Contact model, fall back to emails[]
+    let recipientContacts: {
+      email: string;
+      firstName?: string | null;
+      lastName?: string | null;
+      company?: string | null;
+    }[] = [];
+
+    const dbContacts = await prisma.contact.findMany({
+      where: {
+        contactListId,
+        isSubscribed: true,
+        isBounced: false,
+        isComplained: false,
+      },
+      select: { email: true, firstName: true, lastName: true, company: true },
+    });
+
+    if (dbContacts.length > 0) {
+      recipientContacts = dbContacts;
+    } else {
+      // Legacy fallback: use emails[] array from contact list
+      recipientContacts = contactList.emails.map((e) => ({ email: e }));
+    }
+
+    if (recipientContacts.length === 0) {
+      return NextResponse.json(
+        {
+          error:
+            "No sendable contacts in this list (all may be unsubscribed or bounced)",
+        },
+        { status: 400 },
+      );
+    }
+
+    // Filter out globally suppressed emails
+    const suppressedSet = new Set<string>();
+    const suppressions = await prisma.emailSuppression.findMany({
+      where: { email: { in: recipientContacts.map((c) => c.email) } },
+      select: { email: true },
+    });
+    suppressions.forEach((s) => suppressedSet.add(s.email));
+    recipientContacts = recipientContacts.filter(
+      (c) => !suppressedSet.has(c.email),
+    );
+
+    if (recipientContacts.length === 0) {
+      return NextResponse.json(
+        { error: "All contacts in this list are suppressed" },
+        { status: 400 },
+      );
+    }
+
+    // Create EmailHistory record first so we have the ID for tags
     const emailHistory = await prisma.emailHistory.create({
       data: {
         subject,
         body: emailBody,
+        preheader: preheader || null,
         contactListId,
         userId: session.user.id,
-        sendMethod: sendMethod || "transactional",
+        senderId: sender.id,
+        senderEmail: sender.email,
+        senderName: sender.name,
+        sendMethod: "batch",
+        status: "sending",
+        sentCount: 0,
       },
     });
 
-    const htmlContent = generateEmailTemplate(emailBody, subject);
-    const senderInfo = { name: sender.name, email: sender.email };
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+    const fromAddress = `${sender.name} <${sender.email}>`;
 
-    let campaignId: number | undefined;
-    const messageIds: string[] = [];
+    // Build batch payload — one email per recipient with personalisation
+    const batchPayload = recipientContacts.map((contact) => {
+      const variables: Record<string, string> = {
+        first_name: contact.firstName || "",
+        last_name: contact.lastName || "",
+        full_name: [contact.firstName, contact.lastName]
+          .filter(Boolean)
+          .join(" "),
+        email: contact.email,
+        company: contact.company || "",
+      };
 
-    if (sendMethod === "campaign") {
-      // METHOD 1: Marketing Campaign
-      const campaign = await brevo.createEmailCampaign({
-        name: `Campaign-${emailHistory.id}`,
-        subject,
-        sender: senderInfo,
-        replyTo: senderInfo,
-        htmlContent,
-        recipients: { listIds: [contactList.brevoListId] },
+      const personalizedBody = replaceVariables(emailBody, variables);
+      const unsubscribeUrl = `${appUrl}/api/unsubscribe?email=${encodeURIComponent(contact.email)}&historyId=${emailHistory.id}`;
+
+      const html = generateEmailTemplate({
+        body: personalizedBody,
+        subject: replaceVariables(subject, variables),
+        senderName: sender.name,
+        preheader: replaceVariables(preheader || "", variables),
+        unsubscribeUrl,
+        variables,
       });
 
-      campaignId = campaign.body.id;
-
-      const res = await brevo.sendEmailCampaignNow(campaign.body.id!);
-      console.log(res);
-      console.log("Campaign sent successfully");
-
-      await prisma.emailHistory.update({
-        where: { id: emailHistory.id },
-        data: {
-          campaignId: campaign.body.id,
-          sentCount: contactList.emails.length,
+      return {
+        from: fromAddress,
+        to: contact.email,
+        subject: replaceVariables(subject, variables),
+        html,
+        headers: {
+          "List-Unsubscribe": `<${unsubscribeUrl}>`,
+          "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
         },
-      });
+        tags: [
+          { name: "email_history_id", value: emailHistory.id },
+          { name: "contact_list_id", value: contactListId },
+        ],
+      };
+    });
 
-      return NextResponse.json({
-        success: true,
-        emailHistoryId: emailHistory.id,
-        campaignId: campaign.body.id,
-        recipientCount: contactList.emails.length,
-        method: "campaign",
-      });
-    } else {
-      // METHOD 2: Transactional Email (INDIVIDUAL SENDING)
-      // Send one email at a time to make it look personal
-      
-      let successCount = 0;
-      let failureCount = 0;
-      const errors: Array<{ email: string; error: string }> = [];
+    // Send in batches of 100
+    const { ids, failedCount } = await sendBatch(batchPayload, emailHistory.id);
 
-      for (const email of contactList.emails) {
-        try {
-          const result = await brevo.sendTransactionalEmail({
-            sender: senderInfo,
-            to: [{ email }], // Only ONE recipient per email
-            replyTo: senderInfo,
-            subject,
-            htmlContent,
-            tags: [`history-${emailHistory.id}`],
-          });
+    const sentCount = recipientContacts.length - failedCount;
 
-          if (result.body.messageId) {
-            messageIds.push(result.body.messageId);
-            successCount++;
-          }
-
-          // Optional: Add a small delay between sends to avoid rate limiting
-          // Uncomment if you experience rate limit issues
-          // await new Promise(resolve => setTimeout(resolve, 100)); // 100ms delay
-          
-        } catch (error) {
-          console.error(`Failed to send to ${email}:`, error);
-          failureCount++;
-          errors.push({
-            email,
-            error: error instanceof Error ? error.message : "Unknown error",
-          });
-        }
-      }
-
-      await prisma.emailHistory.update({
-        where: { id: emailHistory.id },
-        data: {
-          campaignId: messageIds[0] ? parseInt(messageIds[0]) : undefined,
-          sentCount: successCount,
-        },
-      });
-
-      return NextResponse.json({
-        success: true,
-        emailHistoryId: emailHistory.id,
-        messageIds,
-        recipientCount: contactList.emails.length,
-        successCount,
-        failureCount,
-        method: "transactional",
-        individualSends: true,
-        errors: errors.length > 0 ? errors : undefined,
-      });
-    }
-  } catch (error) {
-    console.error("Error sending email:", error);
-    return NextResponse.json(
-      {
-        error: error instanceof Error ? error.message : "Internal server error",
+    // Update history with results
+    await prisma.emailHistory.update({
+      where: { id: emailHistory.id },
+      data: {
+        status: failedCount === recipientContacts.length ? "failed" : "sent",
+        sentCount,
+        failedCount,
+        batchIds: ids,
       },
-      { status: 500 }
+    });
+
+    return NextResponse.json({
+      success: true,
+      emailHistoryId: emailHistory.id,
+      recipientCount: recipientContacts.length,
+      sentCount,
+      failedCount,
+    });
+  } catch (error) {
+    console.error("Error sending batch email:", error);
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 },
     );
   }
 }

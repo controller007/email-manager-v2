@@ -1,12 +1,12 @@
 // app/email-history/page.tsx
 import { requireAuth } from "@/app/_lib/auth/session";
 import DashboardLayout from "@/app/_components/dashboard-layout";
-import { EmailHistoryList } from "@/app/_components/email-history-list";
 import { EmailHistoryFilters } from "@/app/_components/email-history-filters";
 import { Button } from "@/app/_components/ui/button";
 import prisma from "@/app/_lib/db/prisma";
 import { Send } from "lucide-react";
 import Link from "next/link";
+import { EmailHistoryList } from "../_components/email-history-list";
 
 interface SearchParams {
   status?: string;
@@ -106,7 +106,7 @@ export default async function EmailHistoryPage({
 
         {/* Email History List */}
         <EmailHistoryList
-          emailHistory={emailHistory}
+          emailHistory={emailHistory as any}
           totalCount={totalCount}
           currentPage={currentPage}
           totalPages={totalPages}

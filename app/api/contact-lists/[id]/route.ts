@@ -1,181 +1,190 @@
-// app/api/contact-lists/[id]/route.ts - UPDATED FOR BREVO
+// app/api/contact-lists/[id]/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/app/_lib/auth/session";
 import prisma from "@/app/_lib/db/prisma";
-import { contactListSchema } from "@/app/_lib/validations/email";
-import { brevo } from "@/app/_lib/email/brevo-client";
 import { revalidatePath } from "next/cache";
+
+export async function GET(
+  request: NextRequest,
+  { params }: { params: { id: string } },
+) {
+  try {
+    const user = await requireAuth();
+    const { searchParams } = new URL(request.url);
+    const page = Math.max(1, parseInt(searchParams.get("page") || "1"));
+    const limit = Math.min(100, parseInt(searchParams.get("limit") || "50"));
+    const search = searchParams.get("search") || "";
+    const skip = (page - 1) * limit;
+
+    const list = await prisma.contactList.findFirst({
+      where: { id: params.id, createdBy: user.id },
+      include: {
+        domain: { select: { domain: true, status: true } },
+        _count: { select: { contacts: true, emailHistory: true } },
+      },
+    });
+
+    if (!list) {
+      return NextResponse.json(
+        { error: "Contact list not found" },
+        { status: 404 },
+      );
+    }
+
+    const whereContacts = {
+      contactListId: params.id,
+      ...(search
+        ? {
+            OR: [
+              { email: { contains: search, mode: "insensitive" as const } },
+              { firstName: { contains: search, mode: "insensitive" as const } },
+              { lastName: { contains: search, mode: "insensitive" as const } },
+              { company: { contains: search, mode: "insensitive" as const } },
+            ],
+          }
+        : {}),
+    };
+
+    const [contacts, total] = await Promise.all([
+      prisma.contact.findMany({
+        where: whereContacts,
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+      }),
+      prisma.contact.count({ where: whereContacts }),
+    ]);
+
+    return NextResponse.json({
+      list,
+      contacts,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    });
+  } catch (error) {
+    console.error("Error fetching contact list:", error);
+    return NextResponse.json(
+      { error: "Internal server error" },
+      { status: 500 },
+    );
+  }
+}
 
 export async function PUT(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: { id: string } },
 ) {
   try {
     const user = await requireAuth();
     const body = await request.json();
+    const { name, description } = body;
 
-    const validationResult = contactListSchema.safeParse(body);
-    if (!validationResult.success) {
-      return NextResponse.json(
-        { error: validationResult.error.errors[0].message },
-        { status: 400 }
-      );
+    if (!name?.trim()) {
+      return NextResponse.json({ error: "Name is required" }, { status: 400 });
     }
 
-    const { name, emails, domainId } = validationResult.data;
-
-    const existingList = await prisma.contactList.findUnique({
+    const existing = await prisma.contactList.findUnique({
       where: { id: params.id },
     });
 
-    if (!existingList) {
+    if (!existing) {
       return NextResponse.json(
         { error: "Contact list not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
-
-    if (existingList.createdBy !== user.id) {
+    if (existing.createdBy !== user.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
 
-    const duplicateName = await prisma.contactList.findFirst({
-      where: {
-        name,
-        createdBy: user.id,
-        id: { not: params.id },
-      },
+    // Check for duplicate name (excluding this list)
+    const duplicate = await prisma.contactList.findFirst({
+      where: { name: name.trim(), createdBy: user.id, id: { not: params.id } },
     });
-
-    if (duplicateName) {
+    if (duplicate) {
       return NextResponse.json(
         { error: "A contact list with this name already exists" },
-        { status: 400 }
+        { status: 400 },
       );
     }
 
-    if (domainId && domainId !== existingList.domainId) {
-      const domain = await prisma.domain.findFirst({
-        where: {
-          id: domainId,
-          userId: user.id,
-          status: "verified",
-        },
-      });
-
-      if (!domain) {
-        return NextResponse.json(
-          { error: "Invalid or unverified domain" },
-          { status: 400 }
-        );
-      }
-    }
-
-    // Re-import contacts if emails changed
-    if (JSON.stringify(emails.sort()) !== JSON.stringify(existingList.emails.sort())) {
-      if (existingList.brevoListId) {
-        const notifyUrl = `${process.env.NEXT_PUBLIC_APP_URL}/api/webhooks/brevo/import/${existingList.id}`;
-        const contactsData = emails.map((email) => ({ email }));
-
-        const importResult = await brevo.importContacts(
-          contactsData,
-          [existingList.brevoListId],
-          notifyUrl
-        );
-
-        await prisma.contactList.update({
-          where: { id: params.id },
-          data: {
-            name,
-            emails,
-            ...(domainId && { domainId }),
-            status: "pending",
-            processId: importResult.body.processId,
-            updatedAt: new Date(),
-          },
-        });
-      }
-    } else {
-      await prisma.contactList.update({
-        where: { id: params.id },
-        data: {
-          name,
-          emails,
-          ...(domainId && { domainId }),
-          updatedAt: new Date(),
-        },
-      });
-    }
-
-    const updatedList = await prisma.contactList.findUnique({
+    const updated = await prisma.contactList.update({
       where: { id: params.id },
+      data: {
+        name: name.trim(),
+        description: description?.trim() || undefined,
+        updatedAt: new Date(),
+      },
       include: {
-        domain: {
-          select: {
-            domain: true,
-            status: true,
-          },
-        },
+        domain: { select: { domain: true, status: true } },
+        _count: { select: { contacts: true, emailHistory: true } },
       },
     });
 
-    return NextResponse.json(updatedList);
+    revalidatePath("/");
+    return NextResponse.json(updated);
   } catch (error) {
     console.error("Error updating contact list:", error);
     return NextResponse.json(
       { error: "Failed to update contact list" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }
 
 export async function DELETE(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: { id: string } },
 ) {
   try {
     const user = await requireAuth();
 
-    const existingList = await prisma.contactList.findUnique({
+    const existing = await prisma.contactList.findUnique({
       where: { id: params.id },
-      include: { domain: true },
+      include: {
+        emailHistory: { select: { id: true } },
+      },
     });
 
-    if (!existingList) {
+    if (!existing) {
       return NextResponse.json(
         { error: "Contact list not found" },
-        { status: 404 }
+        { status: 404 },
       );
     }
-
-    if (existingList.createdBy !== user.id) {
+    if (existing.createdBy !== user.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 403 });
     }
 
-    if (existingList.brevoListId) {
-      try {
-        await brevo.deleteList(existingList.brevoListId);
-        console.log(`Deleted Brevo list: ${existingList.brevoListId}`);
-      } catch (error) {
-        console.error("Failed to delete Brevo list:", error);
-      }
-    }
+    const emailHistoryIds = existing.emailHistory.map((eh) => eh.id);
 
-    await prisma.contactList.delete({
-      where: { id: params.id },
+    await prisma.$transaction(async (tx) => {
+      if (emailHistoryIds.length > 0) {
+        await tx.emailRecipientEvent.deleteMany({
+          where: { emailHistoryId: { in: emailHistoryIds } },
+        });
+        await tx.emailHistory.deleteMany({
+          where: { id: { in: emailHistoryIds } },
+        });
+      }
+      // Contact records cascade delete via Prisma relation
+      await tx.contactList.delete({ where: { id: params.id } });
     });
 
     revalidatePath("/");
-
     return NextResponse.json({
       success: true,
-      message: "Contact list deleted successfully",
+      message: "Contact list deleted",
     });
   } catch (error) {
     console.error("Error deleting contact list:", error);
     return NextResponse.json(
       { error: "Failed to delete contact list" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

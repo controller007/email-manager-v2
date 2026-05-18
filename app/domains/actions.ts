@@ -1,11 +1,9 @@
-// app/domains/actions.ts - UPDATED FOR BREVO
 "use server";
 
 import { revalidatePath } from "next/cache";
 import { requireAuth } from "@/app/_lib/auth/session";
 import prisma from "@/app/_lib/db/prisma";
-import { brevo } from "@/app/_lib/email/brevo-client";
-import type { BrevoDomainDnsRecord } from "@/types/brevo";
+import { resend } from "@/app/_lib/email/resend-client";
 
 interface DomainDnsRecords {
   record: string;
@@ -27,33 +25,28 @@ export async function createDomain(domainName: string) {
       return { success: false, error: "Domain already exists in the system" };
     }
 
-    const brevoDomain = await brevo.createDomain(domainName);
+    const { data: resendDomain, error } = await resend.domains.create({
+      name: domainName,
+      region: "us-east-1",
+    });
 
-    const domainConfig = await brevo.getDomainConfiguration(domainName);
+    if (error || !resendDomain) {
+      return {
+        success: false,
+        error: error?.message || "Failed to create domain in Resend",
+      };
+    }
 
     const domain = await prisma.domain.create({
       data: {
         domain: domainName,
         status: "pending",
-        brevoId: domainName,
+        resendId: resendDomain.id,
         userId: user.id,
       },
     });
 
-    console.log(domainConfig);
-
-    const records: DomainDnsRecords[] = Object.values(domainConfig.dns_records)
-      .filter(Boolean)
-      .map((record: any) => ({
-        record: record.type,
-        name: record.host_name,
-        value: record.value,
-        type: record.type,
-        priority: record.priority ?? null,
-        status: record.status,
-      }));
-
-    revalidatePath("/domains");
+    revalidatePath("/");
 
     return {
       success: true,
@@ -61,16 +54,12 @@ export async function createDomain(domainName: string) {
         id: domain.id,
         domain: domain.domain,
         status: domain.status,
-        records,
+        records: resendDomain.records as DomainDnsRecords[],
       },
     };
   } catch (error) {
     console.error("Create domain error:", error);
-    return {
-      success: false,
-      error:
-        error instanceof Error ? error.message : "An unexpected error occurred",
-    };
+    return { success: false, error: "An unexpected error occurred" };
   }
 }
 
@@ -82,22 +71,39 @@ export async function verifyDomain(domainId: string) {
       where: { id: domainId, userId: user.id },
     });
 
-    if (!domain || !domain.brevoId) {
+    if (!domain || !domain.resendId) {
       return { success: false, error: "Domain not found" };
     }
+    await resend.domains.verify(domain.resendId);
 
-    await brevo.authenticateDomain(domain.brevoId);
+    const { data, error } = await resend.domains.get(domain.resendId);
 
-    const domainConfig = await brevo.getDomainConfiguration(domain.brevoId);
+    console.log(data);
+    
+    if (error) {
+      return { success: false, error: error.message || "Verification failed" };
+    }
 
-    const status = domainConfig.authenticated ? "verified" : "pending";
+    const status = data?.status === "verified" ? "verified" : "pending";
+
+    if (status === "verified") {
+      try {
+        await resend.domains.update({
+          id: domain.resendId,
+          openTracking: true,
+          clickTracking: true,
+        });
+      } catch (e) {
+        console.error("Failed to enable tracking:", e);
+      }
+    }
 
     await prisma.domain.update({
       where: { id: domainId },
       data: { status },
     });
 
-    revalidatePath("/domains");
+    revalidatePath("/");
 
     return {
       success: true,
@@ -109,10 +115,7 @@ export async function verifyDomain(domainId: string) {
     };
   } catch (error) {
     console.error("Verify domain error:", error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Verification failed",
-    };
+    return { success: false, error: "Verification failed" };
   }
 }
 
@@ -124,28 +127,22 @@ export async function getDomainRecords(domainId: string) {
       where: { id: domainId, userId: user.id },
     });
 
-    if (!domain || !domain.brevoId) {
+    if (!domain || !domain.resendId) {
       return { success: false, error: "Domain not found" };
     }
 
-    const domainData = await brevo.getDomainConfiguration(domain.brevoId);
+    const { data: domainData, error } = await resend.domains.get(
+      domain.resendId,
+    );
 
-  const records: DomainDnsRecords[] = Object.values(domainData.dns_records)
-      .filter(Boolean)
-      .map((record: any) => ({
-        record: record.type,
-        name: record.host_name,
-        value: record.value,
-        type: record.type,
-        priority: record.priority ?? null,
-        status: record.status,
-      }));
-
+    if (error || !domainData) {
+      return { success: false, error: "Failed to fetch domain records" };
+    }
 
     return {
       success: true,
-      records,
-      status: domainData.authenticated ? "verified" : "pending",
+      records: domainData.records as DomainDnsRecords[],
+      status: domainData.status,
     };
   } catch (error) {
     console.error("Get domain records error:", error);
@@ -156,7 +153,7 @@ export async function getDomainRecords(domainId: string) {
 export async function createSender(
   domainId: string,
   name: string,
-  username: string
+  username: string,
 ) {
   try {
     const user = await requireAuth();
@@ -171,42 +168,24 @@ export async function createSender(
 
     const email = `${username}@${domain.domain}`;
 
-    const existingSender = await prisma.sender.findUnique({
-      where: { email },
-    });
-
+    const existingSender = await prisma.sender.findUnique({ where: { email } });
     if (existingSender) {
       return { success: false, error: "Sender email already exists" };
     }
 
-    const brevoSender = await brevo.createSender({ name, email });
-
     const sender = await prisma.sender.create({
-      data: {
-        name,
-        email,
-        brevoId: brevoSender.body.id,
-        domainId,
-        userId: user.id,
-      },
+      data: { name, email, domainId, userId: user.id },
     });
 
-    revalidatePath("/domains");
+    revalidatePath("/");
 
     return {
       success: true,
-      sender: {
-        id: sender.id,
-        name: sender.name,
-        email: sender.email,
-      },
+      sender: { id: sender.id, name: sender.name, email: sender.email },
     };
   } catch (error) {
     console.error("Create sender error:", error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Failed to create sender",
-    };
+    return { success: false, error: "Failed to create sender" };
   }
 }
 
@@ -216,9 +195,7 @@ export async function getAllDomains() {
 
     const domains = await prisma.domain.findMany({
       where: { userId: user.id },
-      include: {
-        senders: true,
-      },
+      include: { senders: true },
       orderBy: { createdAt: "desc" },
     });
 
@@ -238,9 +215,7 @@ export async function deleteDomain(domainId: string) {
       include: {
         contactLists: {
           include: {
-            emailHistory: {
-              select: { id: true },
-            },
+            emailHistory: { select: { id: true } },
           },
         },
         senders: true,
@@ -252,69 +227,35 @@ export async function deleteDomain(domainId: string) {
     }
 
     const emailHistoryIds = domain.contactLists.flatMap((list) =>
-      list.emailHistory.map((eh) => eh.id)
+      list.emailHistory.map((eh) => eh.id),
     );
 
-    // Delete contact lists from Brevo
-    for (const list of domain.contactLists) {
-      if (list.brevoListId) {
-        try {
-          await brevo.deleteList(list.brevoListId);
-          console.log(`Deleted Brevo list: ${list.brevoListId}`);
-        } catch (error) {
-          console.error(
-            `Failed to delete Brevo list ${list.brevoListId}:`,
-            error
-          );
-        }
-      }
-    }
-
-    // Delete senders from Brevo
-    for (const sender of domain.senders) {
-      if (sender.brevoId) {
-        try {
-          await brevo.deleteSender(sender.brevoId);
-          console.log(`Deleted Brevo sender: ${sender.brevoId}`);
-        } catch (error) {
-          console.error(
-            `Failed to delete Brevo sender ${sender.brevoId}:`,
-            error
-          );
-        }
-      }
-    }
-
-    // Delete domain from Brevo
-    if (domain.brevoId) {
+    // Delete from Resend
+    if (domain.resendId) {
       try {
-        await brevo.deleteDomain(domain.brevoId);
-        console.log(`Deleted Brevo domain: ${domain.brevoId}`);
+        await resend.domains.remove(domain.resendId);
+        console.log(`Deleted Resend domain: ${domain.resendId}`);
       } catch (error) {
-        console.error("Failed to delete Brevo domain:", error);
+        console.error("Failed to delete Resend domain:", error);
+        // Continue with DB deletion regardless
       }
     }
 
-    // Delete from database
-    if (emailHistoryIds.length > 0) {
-      await prisma.emailRecipientEvent.deleteMany({
-        where: { emailHistoryId: { in: emailHistoryIds } },
-      });
-      await prisma.emailHistory.deleteMany({
-        where: { id: { in: emailHistoryIds } },
-      });
-    }
+    // Delete in correct order
+    await prisma.$transaction(async (tx) => {
+      if (emailHistoryIds.length > 0) {
+        await tx.emailRecipientEvent.deleteMany({
+          where: { emailHistoryId: { in: emailHistoryIds } },
+        });
+        await tx.emailHistory.deleteMany({
+          where: { id: { in: emailHistoryIds } },
+        });
+      }
 
-    await prisma.contactList.deleteMany({
-      where: { domainId: domainId },
-    });
-
-    await prisma.sender.deleteMany({
-      where: { domainId: domainId },
-    });
-
-    await prisma.domain.delete({
-      where: { id: domainId },
+      // Contacts cascade from contactList deletion
+      await tx.contactList.deleteMany({ where: { domainId } });
+      await tx.sender.deleteMany({ where: { domainId } });
+      await tx.domain.delete({ where: { id: domainId } });
     });
 
     revalidatePath("/");
@@ -332,7 +273,7 @@ export async function updateSender(
   senderId: string,
   name: string,
   username: string,
-  domainName: string
+  domainName: string,
 ) {
   try {
     const user = await requireAuth();
@@ -348,44 +289,27 @@ export async function updateSender(
     const newEmail = `${username}@${domainName}`;
 
     const existingSender = await prisma.sender.findFirst({
-      where: {
-        email: newEmail,
-        id: { not: senderId },
-      },
+      where: { email: newEmail, id: { not: senderId } },
     });
 
     if (existingSender) {
-      return { success: false, error: "This email is already in use" };
+      return { success: false, error: "Email address already in use" };
     }
 
-    if (sender.brevoId) {
-      await brevo.updateSender(sender.brevoId, { name, email: newEmail });
-    }
-
-    const updatedSender = await prisma.sender.update({
+    const updated = await prisma.sender.update({
       where: { id: senderId },
-      data: {
-        name: name.trim(),
-        email: newEmail,
-      },
+      data: { name, email: newEmail, updatedAt: new Date() },
     });
 
-    revalidatePath("/domains");
+    revalidatePath("/");
 
     return {
       success: true,
-      sender: {
-        id: updatedSender.id,
-        name: updatedSender.name,
-        email: updatedSender.email,
-      },
+      sender: { id: updated.id, name: updated.name, email: updated.email },
     };
   } catch (error) {
     console.error("Update sender error:", error);
-    return {
-      success: false,
-      error: error instanceof Error ? error.message : "Failed to update sender",
-    };
+    return { success: false, error: "Failed to update sender" };
   }
 }
 
@@ -401,244 +325,12 @@ export async function deleteSender(senderId: string) {
       return { success: false, error: "Sender not found" };
     }
 
-    if (sender.brevoId) {
-      try {
-        await brevo.deleteSender(sender.brevoId);
-      } catch (error) {
-        console.error("Failed to delete Brevo sender:", error);
-      }
-    }
+    await prisma.sender.delete({ where: { id: senderId } });
 
-    await prisma.sender.delete({
-      where: { id: senderId },
-    });
-
-    revalidatePath("/domains");
-
-    return { success: true, message: "Sender deleted successfully" };
+    revalidatePath("/");
+    return { success: true };
   } catch (error) {
     console.error("Delete sender error:", error);
     return { success: false, error: "Failed to delete sender" };
   }
 }
-
-// "use server";
-
-// import prisma from "@/app/_lib/db/prisma"; // Adjust import path as needed
-// import {
-//   unifiedFormSchema,
-//   UnifiedFormData,
-//   determineTicketType,
-// } from "@/app/_lib/schemas/ticket"; // Adjust import path
-// import { quoteFormSchema, QuoteFormData } from "@/app/_lib/schemas/quote"; // Adjust import path
-// import { revalidatePath } from "next/cache";
-// import { FlightType, PassengerType, TicketType } from "@prisma/client";
-// import { getServerSession } from "next-auth";
-// import { authOptions } from "@/app/_lib/auth/next-auth-options";
-
-// // Server action for submitting ticket
-// export async function submitTicket(data: UnifiedFormData) {
-//   try {
-
-//     const session = await getServerSession(authOptions);
-
-//     if (!session || !session.user || !session.user.id) {
-//       throw new Error("User session not found or invalid.");
-//     }
-//     const userId = session.user.id;
-
-//     // 1. Validate the data
-//     const validatedData = unifiedFormSchema.parse(data);
-
-//     // 2. Determine the high-level ticket type
-
-//     // 3. Prepare Nested Flight and Layover Data
-//     const flightCreateData = validatedData.flights.map((flight) => {
-//       // Prepare the data for the main TicketFlight record
-//       const flightBaseData = {
-//         etid: flight.etid,
-//         airlineId: flight.airline,
-//         fromId: flight.from,
-//         toId: flight.to,
-//         class: flight.class,
-//         pnr: flight.pnr,
-//         std: flight.std,
-//         sta: flight.sta,
-//         iataCode: flight.iataCode,
-//         luggageAmount: flight.luggageAmount,
-//         luggageWeight: flight.luggageWeight,
-//         hasLayover: flight.hasLayover || false,
-//       };
-
-//       // Prepare nested Layover data if any
-//       const layoversConnectData =
-//         flight.layovers && flight.layovers.length > 0
-//           ? {
-//               create: flight.layovers.map((layover) => ({
-//                 airline: layover.airline,
-//                 fromId: layover.from,
-//                 toId: layover.to,
-//                 class: layover.class,
-//                 iataCode:layover.iataCode,
-//                 std: layover.std,
-//                 sta: layover.sta,
-//               })),
-//             }
-//           : undefined;
-
-//       return {
-//         ...flightBaseData,
-//         ...(layoversConnectData && { layovers: layoversConnectData }),
-//       };
-//     });
-
-//     const passengerCreateData =
-//       validatedData.passengerType === "multiple" && validatedData.passengers
-//         ? validatedData.passengers.map((passenger) => ({
-//             title: passenger.title,
-//             firstName: passenger.firstName,
-//             lastName: passenger.lastName,
-//             ageGroup: passenger.ageGroup,
-//           }))
-//         : [];
-
-//     const ticket = await prisma.ticket.create({
-//       data: {
-//         // Main Ticket Data
-//         ticketType: validatedData.selectTicket as TicketType ,
-//         passengerType:
-//           validatedData.passengerType === "single"
-//             ? ("SINGLE" as PassengerType)
-//             : ("MULTIPLE" as PassengerType),
-//         flightType:
-//           validatedData.flightType === "local"
-//             ? ("LOCAL" as FlightType)
-//             : ("INTERNATIONAL" as FlightType),
-
-//         title: validatedData.title,
-//         firstName: validatedData.firstName,
-//         lastName: validatedData.lastName,
-//         ageGroup: validatedData.ageGroup,
-
-//         referredById: validatedData.referredById,
-//         userId: userId,
-
-//         flights: {
-//           create: flightCreateData,
-//         },
-
-//         ...(passengerCreateData.length > 0 && {
-//           passengers: {
-//             create: passengerCreateData,
-//           },
-//         }),
-
-//         receipt: {
-//           create: {
-//             receiptFullName: validatedData.receiptFullName,
-//             amountPaid: validatedData.amountPaid,
-//             payMethod: validatedData.payMethod,
-//             paidOn: validatedData.paidOn,
-//             returnTicketRef: validatedData.returnTicketRef,
-//             airline2: validatedData.airline2,
-//             referenceCode: validatedData.referenceCode,
-//             // ticketId is automatically set by the nested create
-//           },
-//         },
-//       },
-//       // Optionally select the ID back
-//       select: {
-//         id: true,
-//       },
-//     });
-
-//     console.log("hmmer na him o");
-
-//     return { success: true, ticketId: ticket.id };
-//   } catch (error) {
-//     console.error("Error submitting ticket:", error);
-//     return { success: false, error: "Failed to submit ticket" };
-//   }
-// }
-// // Server action for submitting quote
-// export async function submitQuote(data: QuoteFormData) {
-//   try {
-//     const session = await getServerSession(authOptions);
-//     const validatedData = quoteFormSchema.parse(data);
-//     const quote = await prisma.quote.create({
-//       data: {
-//         fullName: validatedData.fullName,
-//         userId: session?.user.id as string,
-//       },
-//     });
-
-//     // Create depart flights
-//     for (const flight of validatedData.departFlights) {
-//       await prisma.quoteFlight.create({
-//         data: {
-//           date: flight.date,
-//           airlineId: flight.airline,
-//           fromId: flight.from,
-//           toId: flight.to,
-//           timeFrom: flight.timeFrom,
-//           timeTo: flight.timeTo,
-//           price: flight.price,
-//           flightType: "depart",
-//           quoteDepartingId: quote.id,
-//         },
-//       });
-//     }
-
-//     // Create return flights
-//     for (const flight of validatedData.returnFlights) {
-//       await prisma.quoteFlight.create({
-//         data: {
-//           date: flight.date,
-//           airlineId: flight.airline,
-//           fromId: flight.from,
-//           toId: flight.to,
-//           timeFrom: flight.timeFrom,
-//           timeTo: flight.timeTo,
-//           price: flight.price,
-//           flightType: "return",
-//           quoteReturningId: quote.id,
-//         },
-//       });
-//     }
-
-//     revalidatePath("/quotes"); // Adjust path as needed
-//     return { success: true, quoteId: quote.id };
-//   } catch (error) {
-//     console.error("Error submitting quote:", error);
-//     return { success: false, error: "Failed to submit quote" };
-//   }
-// }
-
-// export async function generateReferenceCode(flights: any[], flightType: string): Promise<string> {
-//   const hasInternational =flightType === "international" ;
-
-//   const prefix = hasInternational ? "NTTLBI" : "NTTLBL";
-
-//   const yearSuffix = new Date().getFullYear().toString().slice(-2);
-
-//   const lastReceipt = await prisma.receipt.findFirst({
-//     where: { referenceCode: { not: null } },
-//     orderBy: { createdAt: "desc" },
-//     select: { referenceCode: true },
-//   });
-
-//   let nextNumber = 1;
-
-//   if (lastReceipt?.referenceCode) {
-//     const match = lastReceipt.referenceCode.match(/(\d{3})$/);
-
-//     if (match) {
-//       const extracted = parseInt(match[1], 10);
-//       if (!isNaN(extracted)) nextNumber = extracted + 1;
-//     }
-//   }
-
-//   const padded = String(nextNumber).padStart(3, "0");
-
-//   return `${prefix}${yearSuffix}${padded}`;
-// }
