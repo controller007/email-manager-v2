@@ -49,7 +49,7 @@ import {
   ChevronRight,
   PenLine,
 } from "lucide-react";
-import { BUILTIN_TEMPLATES } from "../_lib/email/builtin-templates";
+import { BUILTIN_TEMPLATES } from "../_lib/email/templates";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types

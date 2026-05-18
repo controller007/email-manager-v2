@@ -1,20 +1,35 @@
-// app/api/email-history/route.ts - UPDATED FOR RESEND
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/app/_lib/auth/session";
 import prisma from "@/app/_lib/db/prisma";
 import { resend } from "@/app/_lib/email/resend-client";
 
-// Refresh email stats from Resend manually
 export async function PUT(request: NextRequest) {
   try {
     const user = await requireAuth();
 
-    // Fetch all email histories for the authenticated user containing batch IDs
+    const body = await request.json();
+    const { historyIds } = body;
+
+    
+    if (!Array.isArray(historyIds) || historyIds.length === 0) {
+      return NextResponse.json({
+        success: true,
+        message: "No active history targets provided",
+      });
+    }
+
+    // Pull ONLY the records currently rendered in the active viewport
     const emailHistories = await prisma.emailHistory.findMany({
-      where: { userId: user.id },
+      where: {
+        id: { in: historyIds },
+        userId: user.id,
+        status: "sent",
+      },
       select: { id: true, batchIds: true },
     });
 
+    console.log(emailHistories);
+    
     for (const history of emailHistories) {
       if (!history.batchIds || history.batchIds.length === 0) continue;
 
@@ -24,23 +39,33 @@ export async function PUT(request: NextRequest) {
       let bouncedCount = 0;
       let failedCount = 0;
       let complainedCount = 0;
-      let unsubscribedCount = 0;
 
-      // Poll each individual Resend Message ID to get its live state
-      for (const batchId of history.batchIds) {
-        try {
-          const { data, error } = await resend.emails.get(batchId);
-          if (error || !data) {
-            console.error(`Resend API Error for ID ${batchId}:`, error);
-            continue;
-          }
+      // Parallel chunks of 10 for the visible set
+      const batchSize = 10;
+      for (let i = 0; i < history.batchIds.length; i += batchSize) {
+        const currentBatchIds = history.batchIds.slice(i, i + batchSize);
 
-          const lastEvent = data.last_event; // e.g., "sent" | "delivered" | "opened" | "clicked" | "bounced" | "failed"
+        const batchResults = await Promise.all(
+          currentBatchIds.map(async (batchId) => {
+            try {
+              const { data, error } = await resend.emails.get(batchId);
+              if (error || !data) return null;
+              return { batchId, data };
+            } catch {
+              return null;
+            }
+          }),
+        );
+
+        for (const result of batchResults) {
+          if (!result) continue;
+
+          const { batchId, data } = result;
+          const lastEvent = data.last_event;
           const recipientEmail = Array.isArray(data.to)
             ? data.to[0]
             : data.to || "";
 
-          // 1. Sync individual recipient event records to match webhook architecture
           if (recipientEmail && lastEvent) {
             const existingEvent = await prisma.emailRecipientEvent.findFirst({
               where: {
@@ -67,7 +92,6 @@ export async function PUT(request: NextRequest) {
             }
           }
 
-          // 2. Aggregate totals based on the absolute latest event state
           switch (lastEvent) {
             case "delivered":
               deliveredCount++;
@@ -90,19 +114,10 @@ export async function PUT(request: NextRequest) {
             case "complained":
               complainedCount++;
               break;
-            default:
-              // "sent" or unhandled states don't increment tracking counters
-              break;
           }
-        } catch (error) {
-          console.error(
-            `Failed to fetch stats for batch item ${batchId}:`,
-            error,
-          );
         }
       }
 
-      // 3. Overwrite the summary tallies with fully reconciled numbers
       await prisma.emailHistory.update({
         where: { id: history.id },
         data: {
@@ -112,16 +127,15 @@ export async function PUT(request: NextRequest) {
           bouncedCount,
           failedCount,
           complainedCount,
-          unsubscribedCount,
         },
       });
     }
 
     return NextResponse.json({ success: true });
   } catch (error) {
-    console.error("Error refreshing email history:", error);
+    console.error("Error syncing view targets:", error);
     return NextResponse.json(
-      { error: "Failed to refresh email history" },
+      { error: "Failed to refresh viewport items" },
       { status: 500 },
     );
   }

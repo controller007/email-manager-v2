@@ -7,6 +7,7 @@ import prisma from "@/app/_lib/db/prisma";
 import { Send } from "lucide-react";
 import Link from "next/link";
 import { EmailHistoryList } from "../_components/email-history-list";
+import { HistorySyncClient } from "./sync";
 
 interface SearchParams {
   status?: string;
@@ -80,10 +81,12 @@ export default async function EmailHistoryPage({
   const { emailHistory, totalCount, currentPage, totalPages } =
     await getEmailHistory(user.id, searchParams);
 
+  const visibleHistoryIds = emailHistory.map((item) => item.id);
   return (
     <DashboardLayout>
       <div className="space-y-8">
         {/* Header */}
+        <HistorySyncClient historyIds={visibleHistoryIds} />
         <div className="flex items-center justify-between">
           <div>
             <h1 className="text-3xl  font-bold text-gray-900">Email History</h1>

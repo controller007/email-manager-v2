@@ -126,7 +126,8 @@ model EmailRecipientEvent {
   createdAt       DateTime @default(now())
 
   emailHistory EmailHistory @relation(fields: [emailHistoryId], references: [id], onDelete: Cascade)
-
+  
+  @@unique([emailHistoryId, recipientEmail, resendMessageId])
   @@map("email_recipient_events")
 }
 

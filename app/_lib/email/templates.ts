@@ -6,6 +6,7 @@ export interface BuiltinTemplate {
   description: string;
   subject: string;
   category: string;
+  designJson?: string;
   body: string;
 }
 
