@@ -157,15 +157,15 @@ model Sender {
   @@map("senders")
 }
 
-// ── Email Templates ───────────────────────────────────────────────────────────
 model EmailTemplate {
   id          String   @id @default(auto()) @map("_id") @db.ObjectId
   name        String
   description String?
-  subject     String? // optional default subject
-  body        String // HTML content
-  category    String   @default("custom") // custom | newsletter | promo | welcome | announcement | transactional
-  isBuiltIn   Boolean  @default(false) // true = shipped with app, false = user-created
+  subject     String?
+  body        String
+  designJson  String?
+  category    String   @default("custom")
+  isBuiltIn   Boolean  @default(false)
   userId      String   @db.ObjectId
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt

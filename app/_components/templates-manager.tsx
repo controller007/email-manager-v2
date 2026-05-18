@@ -1,7 +1,14 @@
 "use client";
 
+/**
+ * templates-manager.tsx — UPDATED
+ * ────────────────────────────────
+ * Replaces the old Tiptap form modal with the VisualEmailBuilder.
+ * Keeps all existing template cards, search, filters, and preview logic.
+ * Adds designJson persistence so templates are re-editable visually.
+ */
+
 import { useState, useEffect, useCallback } from "react";
-import { useRouter } from "next/navigation";
 import { Button } from "@/app/_components/ui/button";
 import { Input } from "@/app/_components/ui/input";
 import { Label } from "@/app/_components/ui/label";
@@ -32,19 +39,26 @@ import {
   Search,
   FileText,
   Sparkles,
-  Calendar,
-  Tag,
   AlertCircle,
   CheckCircle,
   X,
   Monitor,
   Smartphone,
-  Mail,
+  Wand2,
+  Type,
+  Clock,
+  Tag,
+  ChevronRight,
+  Braces,
 } from "lucide-react";
-import RichTextEditor from "@/app/_components/rich-text-editor";
-import { BUILTIN_TEMPLATES } from "../_lib/email/templates";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+import RichTextEditor from "@/app/_components/rich-text-editor";
+import { BUILTIN_TEMPLATES } from "@/app/_lib/email/templates";
+import VisualEmailBuilder, { DesignJson, EmailBlock } from "./email-builder";
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface EmailTemplate {
   id: string;
@@ -52,11 +66,14 @@ interface EmailTemplate {
   description?: string | null;
   subject?: string | null;
   body: string;
+  designJson?: string | null; // new field — block state for visual editor
   category: string;
   isBuiltIn: boolean;
   createdAt: string;
   updatedAt: string;
 }
+
+type EditorMode = "visual" | "text";
 
 const CATEGORIES = [
   { value: "all", label: "All Templates" },
@@ -77,9 +94,16 @@ const CATEGORY_COLORS: Record<string, string> = {
   transactional: "bg-teal-100 text-teal-700 border-teal-200",
 };
 
-// ── Email Preview HTML Generator ──────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Preview Modal (accurate iframe, desktop/mobile)
+// ─────────────────────────────────────────────────────────────────────────────
 
-function buildPreviewHtml(body: string, senderName = "Your Brand") {
+function buildPreviewHtml(body: string) {
+  // If the body already contains full HTML (from visual builder), use it directly
+  if (body.trim().startsWith("<!DOCTYPE") || body.trim().startsWith("<html")) {
+    return body;
+  }
+  // Otherwise wrap Tiptap HTML
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -103,34 +127,25 @@ function buildPreviewHtml(body: string, senderName = "Your Brand") {
     .body-content a{color:#2563eb;text-decoration:underline}
     .body-content strong{font-weight:700}
     .body-content em{font-style:italic}
-    .body-content u{text-decoration:underline}
-    .body-content s{text-decoration:line-through}
     .body-content blockquote{padding:12px 16px;border-left:4px solid #e5e7eb;color:#6b7280;margin-bottom:16px;font-style:italic}
     .body-content img{max-width:100%;border-radius:6px;height:auto}
     .body-content hr{border:none;border-top:1px solid #e5e7eb;margin:24px 0}
     .body-content table{width:100%;border-collapse:collapse;margin-bottom:16px}
     .body-content td,.body-content th{padding:10px 12px;border:1px solid #e5e7eb;text-align:left}
     .body-content th{background:#f9fafb;font-weight:600}
-    .body-content code{background:#f3f4f6;padding:2px 6px;border-radius:4px;font-family:monospace;font-size:13px}
-    .body-content pre{background:#1e1e2e;color:#cdd6f4;padding:16px;border-radius:8px;overflow-x:auto;margin-bottom:16px}
-    .body-content pre code{background:transparent;color:inherit;padding:0}
     @media(max-width:600px){.body-content{padding:24px 20px!important}.footer{padding:16px 20px!important}}
   </style>
 </head>
 <body>
   <div class="wrapper">
     <div class="container">
-      <div class="body-content">${body || '<p style="color:#9ca3af;">Your email content will appear here...</p>'}</div>
-      <div class="footer">
-        <p>Sent by <strong>${senderName}</strong> · <a href="#">Unsubscribe</a></p>
-      </div>
+      <div class="body-content">${body || '<p style="color:#9ca3af;">No content</p>'}</div>
+      <div class="footer"><p>Your Brand · <a href="#">Unsubscribe</a></p></div>
     </div>
   </div>
 </body>
 </html>`;
 }
-
-// ── Preview Modal ─────────────────────────────────────────────────────────────
 
 function PreviewModal({
   open,
@@ -144,38 +159,39 @@ function PreviewModal({
   const [viewMode, setViewMode] = useState<"desktop" | "mobile">("desktop");
   if (!template) return null;
 
+  const isVisual = !!template.designJson;
+
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-5xl h-[92vh] flex flex-col p-0 gap-0">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-200 bg-white rounded-t-xl">
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-200 bg-white rounded-t-xl shrink-0">
           <div className="min-w-0 flex-1">
-            <DialogTitle className="text-sm font-semibold text-gray-900 truncate pr-4">
+            <DialogTitle className="text-sm font-semibold text-gray-900 truncate pr-4 flex items-center gap-2">
               {template.name}
+              {isVisual && (
+                <span className="inline-flex items-center gap-1 bg-blue-50 border border-blue-200 text-blue-700 text-[10px] font-semibold px-2 py-0.5 rounded-full">
+                  <Wand2 className="h-2.5 w-2.5" /> Visual
+                </span>
+              )}
             </DialogTitle>
             <DialogDescription className="text-xs text-gray-500 mt-0.5">
-              Template preview
+              {template.subject
+                ? `Subject: ${template.subject}`
+                : "Template preview"}
             </DialogDescription>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <div className="flex bg-gray-100 rounded-lg p-0.5 gap-0.5">
               <button
                 onClick={() => setViewMode("desktop")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                  viewMode === "desktop"
-                    ? "bg-white shadow-sm text-gray-900"
-                    : "text-gray-500 hover:text-gray-700"
-                }`}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${viewMode === "desktop" ? "bg-white shadow-sm text-gray-900" : "text-gray-500 hover:text-gray-700"}`}
               >
                 <Monitor className="h-3.5 w-3.5" /> Desktop
               </button>
               <button
                 onClick={() => setViewMode("mobile")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                  viewMode === "mobile"
-                    ? "bg-white shadow-sm text-gray-900"
-                    : "text-gray-500 hover:text-gray-700"
-                }`}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${viewMode === "mobile" ? "bg-white shadow-sm text-gray-900" : "text-gray-500 hover:text-gray-700"}`}
               >
                 <Smartphone className="h-3.5 w-3.5" /> Mobile
               </button>
@@ -190,10 +206,10 @@ function PreviewModal({
         </div>
 
         {/* Inbox chrome */}
-        <div className="px-5 py-3 bg-white border-b border-gray-100">
+        <div className="px-5 py-3 bg-white border-b border-gray-100 shrink-0">
           <div className="flex items-start gap-3">
             <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center text-white text-sm font-bold shrink-0">
-              Y
+              {template.name.charAt(0).toUpperCase()}
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-0.5">
@@ -208,36 +224,132 @@ function PreviewModal({
                 {template.subject || "(No subject set)"}
               </p>
             </div>
-            <span className="text-xs text-gray-400 shrink-0">Just now</span>
+            <span className="text-xs text-gray-400 shrink-0">Preview</span>
           </div>
         </div>
 
         {/* Email iframe */}
-        <div className="flex-1 overflow-auto bg-gray-100 p-6 flex justify-center">
-          <div
-            className="bg-white shadow-lg rounded-2xl overflow-hidden transition-all duration-300"
-            style={{
-              width: viewMode === "mobile" ? "390px" : "100%",
-              maxWidth: viewMode === "mobile" ? "390px" : "720px",
-            }}
-          >
-            <iframe
-              srcDoc={buildPreviewHtml(template.body)}
-              title="Email preview"
-              className="w-full border-0"
-              style={{ height: "600px" }}
-              sandbox="allow-same-origin"
-            />
-          </div>
+        <div className="flex-1 overflow-auto bg-gray-200 p-6 flex justify-center">
+          {viewMode === "mobile" ? (
+            <div
+              className="relative bg-gray-900 rounded-[2.5rem] p-3 pb-4 shadow-2xl"
+              style={{ width: 410 }}
+            >
+              <div className="absolute top-3 left-1/2 -translate-x-1/2 w-16 h-1.5 bg-gray-700 rounded-full" />
+              <div className="bg-white rounded-[2rem] overflow-hidden mt-3">
+                <iframe
+                  srcDoc={buildPreviewHtml(template.body)}
+                  title="Mobile preview"
+                  className="w-full border-0 block"
+                  style={{ height: 640 }}
+                  sandbox="allow-same-origin"
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="bg-white rounded-2xl shadow-2xl overflow-hidden w-full max-w-3xl">
+              <div className="bg-gray-100 px-4 py-2.5 flex items-center gap-2 border-b border-gray-200">
+                <div className="flex gap-1.5">
+                  {["bg-red-400", "bg-yellow-400", "bg-green-400"].map(
+                    (c, i) => (
+                      <div
+                        key={i}
+                        className={`w-2.5 h-2.5 rounded-full ${c}`}
+                      />
+                    ),
+                  )}
+                </div>
+                <div className="flex-1 bg-white border border-gray-200 rounded-md px-3 py-0.5 text-xs text-gray-400">
+                  Template Preview
+                </div>
+              </div>
+              <iframe
+                srcDoc={buildPreviewHtml(template.body)}
+                title="Desktop preview"
+                className="w-full border-0 block"
+                style={{ height: 680 }}
+                sandbox="allow-same-origin"
+              />
+            </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>
   );
 }
 
-// ── Create / Edit Template Modal ──────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Editor Mode Picker (shown when creating a new template)
+// ─────────────────────────────────────────────────────────────────────────────
 
-function TemplateFormModal({
+function EditorModePicker({
+  onSelect,
+}: {
+  onSelect: (mode: EditorMode) => void;
+}) {
+  return (
+    <Dialog open onOpenChange={() => {}}>
+      <DialogContent className="min-w-[700px]">
+        <DialogHeader>
+          <DialogTitle>Choose your editor</DialogTitle>
+          <DialogDescription>
+            Pick how you'd like to build this template. You can always switch
+            later.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="grid grid-cols-2 gap-4 pt-2">
+          <button
+            onClick={() => onSelect("visual")}
+            className="flex flex-col items-center gap-3 p-6 border-2 border-gray-200 rounded-2xl hover:border-blue-500 hover:bg-blue-50 transition-all group text-left"
+          >
+            <div className="w-12 h-12 rounded-xl bg-blue-100 group-hover:bg-blue-200 flex items-center justify-center transition-colors">
+              <Wand2 className="h-6 w-6 text-blue-600" />
+            </div>
+            <div>
+              <p className="text-sm font-bold text-gray-900 mb-1">
+                Visual Builder
+              </p>
+              <p className="text-xs text-gray-500 leading-relaxed">
+                Drag-and-drop blocks, visual styling, and pixel-perfect layouts.
+                Best for marketing emails.
+              </p>
+            </div>
+            <span className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
+              ✨ Recommended
+            </span>
+          </button>
+
+          <button
+            onClick={() => onSelect("text")}
+            className="flex flex-col items-center gap-3 p-6 border-2 border-gray-200 rounded-2xl hover:border-gray-400 hover:bg-gray-50 transition-all group text-left"
+          >
+            <div className="w-12 h-12 rounded-xl bg-gray-100 group-hover:bg-gray-200 flex items-center justify-center transition-colors">
+              <Type className="h-6 w-6 text-gray-600" />
+            </div>
+            <div>
+              <p className="text-sm font-bold text-gray-900 mb-1">
+                Rich Text Editor
+              </p>
+              <p className="text-xs text-gray-500 leading-relaxed">
+                Classic text editor with formatting. Best for plain
+                transactional emails and quick drafts.
+              </p>
+            </div>
+            <span className="inline-flex items-center gap-1 text-xs font-semibold text-gray-500 bg-gray-100 border border-gray-200 px-2 py-0.5 rounded-full">
+              <Type className="h-2.5 w-2.5" /> Simple
+            </span>
+          </button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Text-mode Create/Edit Form (for plain templates — Tiptap)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function TextTemplateForm({
   open,
   onClose,
   onSaved,
@@ -251,35 +363,33 @@ function TemplateFormModal({
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [subject, setSubject] = useState("");
-  const [category, setCategory] = useState("custom");
   const [body, setBody] = useState("");
-  const [error, setError] = useState("");
+  const [category, setCategory] = useState("custom");
   const [isSaving, setIsSaving] = useState(false);
-  const [previewMode, setPreviewMode] = useState(false);
+  const [error, setError] = useState("");
 
-  // Reset form when opening/changing template
   useEffect(() => {
-    if (open) {
-      setName(editing?.name ?? "");
-      setDescription(editing?.description ?? "");
-      setSubject(editing?.subject ?? "");
-      setCategory(editing?.category ?? "custom");
-      setBody(editing?.body ?? "");
-      setError("");
-      setPreviewMode(false);
+    if (open && editing) {
+      setName(editing.name);
+      setDescription(editing.description || "");
+      setSubject(editing.subject || "");
+      setBody(editing.body);
+      setCategory(editing.category);
+    } else if (open && !editing) {
+      setName("");
+      setDescription("");
+      setSubject("");
+      setBody("");
+      setCategory("custom");
     }
+    setError("");
   }, [open, editing]);
 
   const handleSave = async () => {
-    if (!name.trim()) {
-      setError("Template name is required.");
+    if (!name.trim() || !body.trim()) {
+      setError("Name and body are required.");
       return;
     }
-    if (!body.trim() || body === "<p></p>") {
-      setError("Template body cannot be empty.");
-      return;
-    }
-
     setIsSaving(true);
     setError("");
     try {
@@ -288,14 +398,22 @@ function TemplateFormModal({
       const res = await fetch(url, {
         method,
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name, description, subject, category, body }),
+        body: JSON.stringify({
+          name: name.trim(),
+          description: description.trim() || undefined,
+          subject: subject.trim() || undefined,
+          body,
+          category,
+        }),
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Failed to save template");
+      if (!res.ok) {
+        const d = await res.json();
+        throw new Error(d.error || "Save failed");
+      }
       onSaved();
       onClose();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "An error occurred");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Error saving template");
     } finally {
       setIsSaving(false);
     }
@@ -303,394 +421,244 @@ function TemplateFormModal({
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-5xl h-[94vh] flex flex-col p-0 gap-0">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-200 bg-white rounded-t-xl shrink-0">
+      <DialogContent className="max-w-4xl h-[92vh] flex flex-col p-0 gap-0">
+        <div className="px-6 py-4 border-b border-gray-200 flex items-center justify-between shrink-0">
           <div>
-            <DialogTitle className="text-base font-semibold text-gray-900">
-              {editing ? "Edit Template" : "Create New Template"}
+            <DialogTitle>
+              {editing ? "Edit Template" : "New Text Template"}
             </DialogTitle>
             <DialogDescription className="text-xs text-gray-500 mt-0.5">
-              {editing
-                ? "Update your saved template"
-                : "Build a reusable email template"}
+              Plain text / rich formatting mode
             </DialogDescription>
           </div>
-          <div className="flex items-center gap-2">
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              onClick={() => setPreviewMode(!previewMode)}
-              className="text-xs"
-            >
-              <Eye className="h-3.5 w-3.5 mr-1.5" />
-              {previewMode ? "Edit" : "Preview"}
-            </Button>
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100"
-            >
-              <X className="h-4 w-4" />
-            </button>
-          </div>
+          <button
+            onClick={onClose}
+            className="p-1.5 rounded-md text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+          >
+            <X className="h-4 w-4" />
+          </button>
         </div>
 
-        {/* Body */}
-        <div className="flex-1 overflow-y-auto">
-          {previewMode ? (
-            /* Preview pane */
-            <div className="h-full bg-gray-100 p-6 flex justify-center">
-              <div className="bg-white shadow-lg rounded-2xl overflow-hidden w-full max-w-2xl">
-                <div className="bg-gray-50 border-b px-4 py-3">
-                  <div className="flex items-center gap-2">
-                    <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-bold">
-                      Y
-                    </div>
-                    <div>
-                      <p className="text-sm font-semibold">Your Brand</p>
-                      <p className="text-xs text-gray-500">
-                        {subject || "(No subject)"}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-                <iframe
-                  srcDoc={buildPreviewHtml(body)}
-                  title="Template preview"
-                  className="w-full border-0"
-                  style={{ height: "500px" }}
-                  sandbox="allow-same-origin"
-                />
-              </div>
-            </div>
-          ) : (
-            /* Edit form */
-            <div className="p-6 space-y-5">
-              {error && (
-                <Alert variant="destructive">
-                  <AlertCircle className="h-4 w-4" />
-                  <AlertDescription>{error}</AlertDescription>
-                </Alert>
-              )}
-
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div className="space-y-1.5">
-                  <Label>Template Name *</Label>
-                  <Input
-                    placeholder="e.g., Monthly Newsletter"
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    disabled={isSaving}
-                  />
-                </div>
-                <div className="space-y-1.5">
-                  <Label>Category</Label>
-                  <Select
-                    value={category}
-                    onValueChange={setCategory}
-                    disabled={isSaving}
-                  >
-                    <SelectTrigger>
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {CATEGORIES.filter((c) => c.value !== "all").map((c) => (
-                        <SelectItem key={c.value} value={c.value}>
-                          {c.label}
-                        </SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <Label>
-                  Default Subject Line{" "}
-                  <span className="text-gray-400 font-normal text-xs">
-                    (optional)
-                  </span>
-                </Label>
-                <Input
-                  placeholder="e.g., Your Monthly Update from {company}"
-                  value={subject}
-                  onChange={(e) => setSubject(e.target.value)}
-                  disabled={isSaving}
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label>
-                  Description{" "}
-                  <span className="text-gray-400 font-normal text-xs">
-                    (optional)
-                  </span>
-                </Label>
-                <Textarea
-                  placeholder="Brief description of what this template is for..."
-                  value={description}
-                  onChange={(e) => setDescription(e.target.value)}
-                  rows={2}
-                  disabled={isSaving}
-                />
-              </div>
-
-              <div className="space-y-1.5">
-                <Label>Email Body *</Label>
-                <RichTextEditor
-                  content={body}
-                  onChange={setBody}
-                  placeholder="Design your email template here..."
-                  minHeight={380}
-                />
-              </div>
-            </div>
+        <div className="flex-1 overflow-y-auto p-6 space-y-4">
+          {error && (
+            <Alert variant="destructive">
+              <AlertCircle className="h-4 w-4" />
+              <AlertDescription>{error}</AlertDescription>
+            </Alert>
           )}
+
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1.5">
+              <Label>Template Name *</Label>
+              <Input
+                value={name}
+                onChange={(e) => setName(e.target.value)}
+                placeholder="e.g. Welcome Email"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label>Category</Label>
+              <Select value={category} onValueChange={setCategory}>
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  {CATEGORIES.filter((c) => c.value !== "all").map((c) => (
+                    <SelectItem key={c.value} value={c.value}>
+                      {c.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>
+              Description{" "}
+              <span className="text-gray-400 font-normal text-xs">
+                (optional)
+              </span>
+            </Label>
+            <Textarea
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="Brief description of this template..."
+              rows={2}
+            />
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>
+              Default Subject{" "}
+              <span className="text-gray-400 font-normal text-xs">
+                (optional)
+              </span>
+            </Label>
+            <Input
+              value={subject}
+              onChange={(e) => setSubject(e.target.value)}
+              placeholder="e.g. Welcome to {company}!"
+            />
+            <p className="text-xs text-gray-400">
+              Variables like {"{first_name}"}, {"{company}"} will be replaced at
+              send time.
+            </p>
+          </div>
+
+          <div className="space-y-1.5">
+            <Label>Email Content *</Label>
+            <RichTextEditor
+              content={body}
+              onChange={setBody}
+              placeholder="Write your email body..."
+            />
+          </div>
         </div>
 
-        {/* Footer */}
-        <div className="px-6 py-4 border-t border-gray-200 bg-gray-50 rounded-b-xl flex items-center justify-between shrink-0">
-          <p className="text-xs text-gray-400">
-            Use{" "}
-            <code className="bg-gray-100 px-1 rounded text-blue-600">
-              {"{first_name}"}
-            </code>
-            ,{" "}
-            <code className="bg-gray-100 px-1 rounded text-blue-600">
-              {"{email}"}
-            </code>{" "}
-            etc. as dynamic variables
-          </p>
-          <div className="flex gap-2">
-            <Button variant="outline" onClick={onClose} disabled={isSaving}>
-              Cancel
-            </Button>
-            <Button onClick={handleSave} disabled={isSaving}>
-              {isSaving ? (
-                <>
-                  <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white mr-2" />
-                  Saving...
-                </>
-              ) : (
-                <>
-                  <CheckCircle className="h-4 w-4 mr-2" />
-                  {editing ? "Update Template" : "Save Template"}
-                </>
-              )}
-            </Button>
-          </div>
+        <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-3 shrink-0">
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            onClick={handleSave}
+            disabled={isSaving || !name.trim() || !body.trim()}
+          >
+            {isSaving
+              ? "Saving..."
+              : editing
+                ? "Save Changes"
+                : "Create Template"}
+          </Button>
         </div>
       </DialogContent>
     </Dialog>
   );
 }
 
-// ── Built-in template picker ──────────────────────────────────────────────────
-
-function BuiltinTemplatePicker({
-  open,
-  onClose,
-  onSelect,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onSelect: (t: {
-    name: string;
-    subject: string;
-    body: string;
-    category: string;
-  }) => void;
-}) {
-  const [activeCategory, setActiveCategory] = useState("all");
-  const filtered =
-    activeCategory === "all"
-      ? BUILTIN_TEMPLATES
-      : BUILTIN_TEMPLATES.filter((t) => t.category === activeCategory);
-
-  return (
-    <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="max-w-3xl max-h-[85vh] flex flex-col p-0 gap-0">
-        <div className="px-6 py-4 border-b border-gray-200">
-          <DialogTitle>Start from a Built-in Template</DialogTitle>
-          <DialogDescription>
-            Pick one to pre-fill the editor. You can edit everything after.
-          </DialogDescription>
-        </div>
-
-        {/* Category filter */}
-        <div className="flex gap-1.5 px-6 py-3 border-b border-gray-100 flex-wrap">
-          {CATEGORIES.map((c) => (
-            <button
-              key={c.value}
-              onClick={() => setActiveCategory(c.value)}
-              className={`px-3 py-1 rounded-full text-xs font-medium transition-colors ${
-                activeCategory === c.value
-                  ? "bg-blue-600 text-white"
-                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-              }`}
-            >
-              {c.label}
-            </button>
-          ))}
-        </div>
-
-        <div className="flex-1 overflow-y-auto p-6">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            {filtered.map((template) => (
-              <button
-                key={template.id}
-                type="button"
-                onClick={() => {
-                  onSelect(template);
-                  onClose();
-                }}
-                className="text-left p-4 rounded-xl border border-gray-200 hover:border-blue-400 hover:bg-blue-50/40 transition-all group"
-              >
-                <div className="flex items-start justify-between mb-2">
-                  <span className="font-semibold text-sm text-gray-900 group-hover:text-blue-700">
-                    {template.name}
-                  </span>
-                  <Badge
-                    className={`text-xs border ml-2 shrink-0 ${CATEGORY_COLORS[template.category] || CATEGORY_COLORS.custom}`}
-                  >
-                    {template.category}
-                  </Badge>
-                </div>
-                <p className="text-xs text-gray-500 leading-relaxed">
-                  {template.description}
-                </p>
-              </button>
-            ))}
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-// ── Template Card ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Template Card
+// ─────────────────────────────────────────────────────────────────────────────
 
 function TemplateCard({
   template,
   onPreview,
   onEdit,
-  onDelete,
   onDuplicate,
+  onDelete,
 }: {
   template: EmailTemplate;
   onPreview: () => void;
   onEdit: () => void;
-  onDelete: () => void;
   onDuplicate: () => void;
+  onDelete: () => void;
 }) {
-  const [deleting, setDeleting] = useState(false);
+  const isVisual = !!template.designJson;
 
   return (
-    <div className="group relative bg-white border border-gray-200 rounded-xl overflow-hidden hover:shadow-md hover:border-gray-300 transition-all duration-200">
-      {/* Mini email preview */}
+    <div className="group bg-white border border-gray-200 rounded-2xl overflow-hidden hover:border-gray-300 hover:shadow-md transition-all duration-200 flex flex-col">
+      {/* Mini email preview thumbnail */}
       <div
-        className="h-36 bg-gray-50 border-b border-gray-100 overflow-hidden relative cursor-pointer"
+        className="h-36 bg-gray-50 border-b border-gray-100 overflow-hidden cursor-pointer relative"
         onClick={onPreview}
       >
-        <iframe
-          srcDoc={buildPreviewHtml(template.body)}
-          title={template.name}
-          className="w-full border-0 pointer-events-none"
-          style={{
-            height: "500px",
-            transform: "scale(0.3)",
-            transformOrigin: "top left",
-            width: "333%",
-          }}
-          sandbox="allow-same-origin"
-        />
-        {/* Overlay with eye icon on hover */}
-        <div className="absolute inset-0 bg-blue-600/0 group-hover:bg-blue-600/10 flex items-center justify-center transition-all">
-          <div className="opacity-0 group-hover:opacity-100 bg-white rounded-full p-2 shadow-lg transition-all">
-            <Eye className="h-4 w-4 text-blue-600" />
+        <div
+          className="absolute inset-0 scale-[0.35] origin-top-left pointer-events-none"
+          style={{ width: "286%", height: "286%" }}
+        >
+          <iframe
+            srcDoc={buildPreviewHtml(template.body)}
+            title="thumbnail"
+            className="w-full border-0 block"
+            style={{ height: 520 }}
+            sandbox="allow-same-origin"
+          />
+        </div>
+        <div className="absolute inset-0 bg-gradient-to-b from-transparent to-white/20 group-hover:opacity-0 transition-opacity" />
+        <div className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity bg-black/20">
+          <div className="bg-white rounded-lg px-3 py-1.5 flex items-center gap-1.5 shadow-lg">
+            <Eye className="h-3.5 w-3.5 text-gray-700" />
+            <span className="text-xs font-semibold text-gray-700">Preview</span>
           </div>
         </div>
-        {template.isBuiltIn && (
-          <div className="absolute top-2 left-2">
-            <Badge className="text-xs bg-amber-100 text-amber-700 border-amber-200 border">
-              <Sparkles className="h-2.5 w-2.5 mr-1" /> Built-in
-            </Badge>
-          </div>
-        )}
       </div>
 
-      {/* Info */}
-      <div className="p-4">
+      {/* Card body */}
+      <div className="p-4 flex-1 flex flex-col">
         <div className="flex items-start justify-between gap-2 mb-1.5">
-          <h3 className="font-semibold text-sm text-gray-900 truncate">
+          <h3 className="font-semibold text-sm text-gray-900 truncate flex-1">
             {template.name}
           </h3>
-          <Badge
-            className={`text-xs border shrink-0 ${CATEGORY_COLORS[template.category] || CATEGORY_COLORS.custom}`}
-          >
-            {template.category}
-          </Badge>
+          <div className="flex items-center gap-1 shrink-0">
+            {isVisual && (
+              <span className="inline-flex items-center gap-0.5 bg-blue-50 border border-blue-200 text-blue-600 text-[9px] font-semibold px-1.5 py-0.5 rounded-full">
+                <Wand2 className="h-2 w-2" /> Visual
+              </span>
+            )}
+            <Badge
+              className={`text-[10px] px-1.5 py-0.5 ${CATEGORY_COLORS[template.category] || CATEGORY_COLORS.custom}`}
+            >
+              {template.category}
+            </Badge>
+          </div>
         </div>
+
         {template.description && (
-          <p className="text-xs text-gray-500 line-clamp-2 mb-3">
+          <p className="text-xs text-gray-500 line-clamp-2 mb-2">
             {template.description}
           </p>
         )}
-        {template.subject && (
-          <p className="text-xs text-gray-400 truncate mb-3 flex items-center gap-1">
-            <Mail className="h-3 w-3" /> {template.subject}
-          </p>
-        )}
-        <p className="text-xs text-gray-400 flex items-center gap-1 mb-3">
-          <Calendar className="h-3 w-3" />
-          {new Date(template.updatedAt).toLocaleDateString("en-US", {
-            month: "short",
-            day: "numeric",
-            year: "numeric",
-          })}
-        </p>
 
-        {/* Actions */}
-        <div className="flex items-center gap-1.5">
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={onPreview}
-            className="h-7 text-xs flex-1"
-          >
-            <Eye className="h-3 w-3 mr-1" /> Preview
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={onDuplicate}
-            className="h-7 text-xs flex-1"
-          >
-            <Copy className="h-3 w-3 mr-1" /> Duplicate
-          </Button>
+        {template.subject && (
+          <div className="flex items-center gap-1 mb-2">
+            <span className="text-[10px] text-gray-400 font-medium">
+              Subject:
+            </span>
+            <p className="text-[10px] text-gray-500 truncate">
+              {template.subject}
+            </p>
+          </div>
+        )}
+
+        <div className="flex items-center gap-1 mt-auto pt-2 border-t border-gray-50">
+          <span className="text-[10px] text-gray-400 flex items-center gap-0.5 mr-auto">
+            <Clock className="h-2.5 w-2.5" />
+            {new Date(template.updatedAt).toLocaleDateString()}
+          </span>
+
           {!template.isBuiltIn && (
             <>
               <button
                 onClick={onEdit}
-                className="h-7 w-7 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:text-blue-600 hover:border-blue-300 hover:bg-blue-50 transition-colors"
                 title="Edit"
+                className="p-1.5 rounded-lg text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
               >
-                <Pencil className="h-3 w-3" />
+                <Pencil className="h-3.5 w-3.5" />
               </button>
               <button
-                onClick={async () => {
-                  if (!confirm(`Delete "${template.name}"?`)) return;
-                  setDeleting(true);
-                  onDelete();
-                }}
-                disabled={deleting}
-                className="h-7 w-7 flex items-center justify-center rounded border border-gray-200 text-gray-500 hover:text-red-600 hover:border-red-300 hover:bg-red-50 transition-colors disabled:opacity-40"
-                title="Delete"
+                onClick={onDuplicate}
+                title="Duplicate"
+                className="p-1.5 rounded-lg text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors"
               >
-                <Trash2 className="h-3 w-3" />
+                <Copy className="h-3.5 w-3.5" />
+              </button>
+              <button
+                onClick={onDelete}
+                title="Delete"
+                className="p-1.5 rounded-lg text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
               </button>
             </>
+          )}
+          {template.isBuiltIn && (
+            <button
+              onClick={onDuplicate}
+              title="Duplicate to edit"
+              className="p-1.5 rounded-lg text-gray-400 hover:text-green-600 hover:bg-green-50 transition-colors"
+            >
+              <Copy className="h-3.5 w-3.5" />
+            </button>
           )}
         </div>
       </div>
@@ -698,37 +666,101 @@ function TemplateCard({
   );
 }
 
-// ── Main Templates Manager ────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Delete Confirm Dialog
+// ─────────────────────────────────────────────────────────────────────────────
+
+function DeleteConfirmDialog({
+  open,
+  template,
+  onConfirm,
+  onCancel,
+  isDeleting,
+}: {
+  open: boolean;
+  template: EmailTemplate | null;
+  onConfirm: () => void;
+  onCancel: () => void;
+  isDeleting: boolean;
+}) {
+  return (
+    <Dialog open={open} onOpenChange={onCancel}>
+      <DialogContent className="max-w-sm">
+        <DialogHeader>
+          <DialogTitle>Delete Template?</DialogTitle>
+          <DialogDescription>
+            This will permanently delete <strong>{template?.name}</strong>. This
+            action cannot be undone.
+          </DialogDescription>
+        </DialogHeader>
+        <div className="flex gap-3 pt-2">
+          <Button variant="outline" onClick={onCancel} className="flex-1">
+            Cancel
+          </Button>
+          <Button
+            variant="destructive"
+            onClick={onConfirm}
+            disabled={isDeleting}
+            className="flex-1"
+          >
+            {isDeleting ? "Deleting..." : "Delete"}
+          </Button>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main TemplatesManager
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function TemplatesManager() {
   const [templates, setTemplates] = useState<EmailTemplate[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState("");
-  const [activeCategory, setActiveCategory] = useState("all");
+  const [filterCategory, setFilterCategory] = useState("all");
+  const [filterTab, setFilterTab] = useState<"all" | "custom" | "builtin">(
+    "all",
+  );
 
+  // UI state
   const [previewTemplate, setPreviewTemplate] = useState<EmailTemplate | null>(
     null,
   );
+  const [showPreview, setShowPreview] = useState(false);
+
+  // Editor state
+  const [showModePicker, setShowModePicker] = useState(false);
+  const [editorMode, setEditorMode] = useState<EditorMode>("visual");
+  const [showVisualBuilder, setShowVisualBuilder] = useState(false);
+  const [showTextForm, setShowTextForm] = useState(false);
   const [editingTemplate, setEditingTemplate] = useState<EmailTemplate | null>(
     null,
   );
-  const [formOpen, setFormOpen] = useState(false);
-  const [builtinOpen, setBuiltinOpen] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
 
-  // Prefill for creating from builtin
-  const [prefill, setPrefill] = useState<{
-    name: string;
-    subject: string;
-    body: string;
-    category: string;
+  // Delete state
+  const [deleteTarget, setDeleteTarget] = useState<EmailTemplate | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
+
+  // Toast
+  const [toast, setToast] = useState<{
+    msg: string;
+    type: "success" | "error";
   } | null>(null);
 
+  const showToast = (msg: string, type: "success" | "error" = "success") => {
+    setToast({ msg, type });
+    setTimeout(() => setToast(null), 3500);
+  };
+
   const fetchTemplates = useCallback(async () => {
-    setIsLoading(true);
     try {
       const res = await fetch("/api/templates");
-      const data = await res.json();
-      if (res.ok) setTemplates(data);
+      if (res.ok) setTemplates(await res.json());
+    } catch (e) {
+      console.error(e);
     } finally {
       setIsLoading(false);
     }
@@ -738,15 +770,84 @@ export function TemplatesManager() {
     fetchTemplates();
   }, [fetchTemplates]);
 
-  const handleDelete = async (id: string) => {
-    try {
-      const res = await fetch(`/api/templates/${id}`, { method: "DELETE" });
-      if (res.ok) setTemplates((prev) => prev.filter((t) => t.id !== id));
-    } catch {}
+  // ── Create ───────────────────────────────────────────────────────────────
+
+  const handleNewTemplate = () => {
+    setEditingTemplate(null);
+    setShowModePicker(true);
   };
+
+  const handleModeSelected = (mode: EditorMode) => {
+    setEditorMode(mode);
+    setShowModePicker(false);
+    if (mode === "visual") {
+      setShowVisualBuilder(true);
+    } else {
+      setShowTextForm(true);
+    }
+  };
+
+  // ── Edit ─────────────────────────────────────────────────────────────────
+
+  const handleEdit = (template: EmailTemplate) => {
+    setEditingTemplate(template);
+    if (template.designJson) {
+      // Has visual design data → open visual builder
+      setEditorMode("visual");
+      setShowVisualBuilder(true);
+    } else {
+      // Plain text template → open text form
+      setEditorMode("text");
+      setShowTextForm(true);
+    }
+  };
+
+  // ── Visual Builder Save ───────────────────────────────────────────────────
+
+  const handleVisualSave = async (
+    html: string,
+    designJson: string,
+    name: string,
+  ) => {
+    setIsSaving(true);
+    try {
+      const url = editingTemplate
+        ? `/api/templates/${editingTemplate.id}`
+        : "/api/templates";
+      const method = editingTemplate ? "PUT" : "POST";
+      const res = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name,
+          body: html,
+          designJson,
+          category: editingTemplate?.category || "custom",
+          subject: editingTemplate?.subject || undefined,
+          description: editingTemplate?.description || undefined,
+        }),
+      });
+      if (!res.ok) {
+        const d = await res.json();
+        throw new Error(d.error || "Save failed");
+      }
+      await fetchTemplates();
+      setShowVisualBuilder(false);
+      setEditingTemplate(null);
+      showToast(editingTemplate ? "Template updated!" : "Template created!");
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Save failed", "error");
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  // ── Duplicate ─────────────────────────────────────────────────────────────
 
   const handleDuplicate = async (template: EmailTemplate) => {
     try {
+      console.log(template);
+      
       const res = await fetch("/api/templates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -755,79 +856,157 @@ export function TemplatesManager() {
           description: template.description,
           subject: template.subject,
           body: template.body,
+          designJson: template.designJson,
           category: template.category,
         }),
       });
-      if (res.ok) fetchTemplates();
-    } catch {}
+      if (!res.ok) throw new Error("Duplicate failed");
+      await fetchTemplates();
+      showToast("Template duplicated!");
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Duplicate failed", "error");
+    }
   };
 
-  const handleSelectBuiltin = (t: {
-    name: string;
-    subject: string;
-    body: string;
-    category: string;
-  }) => {
-    setPrefill(t);
-    setEditingTemplate(null);
-    setFormOpen(true);
+  // ── Delete ───────────────────────────────────────────────────────────────
+
+  const handleDelete = async () => {
+    if (!deleteTarget) return;
+    setIsDeleting(true);
+    try {
+      const res = await fetch(`/api/templates/${deleteTarget.id}`, {
+        method: "DELETE",
+      });
+      if (!res.ok) throw new Error("Delete failed");
+      await fetchTemplates();
+      showToast("Template deleted.");
+    } catch (e) {
+      showToast(e instanceof Error ? e.message : "Delete failed", "error");
+    } finally {
+      setIsDeleting(false);
+      setDeleteTarget(null);
+    }
   };
 
-  const handleEdit = (template: EmailTemplate) => {
-    setPrefill(null);
-    setEditingTemplate(template);
-    setFormOpen(true);
-  };
+  // ── Filtering ─────────────────────────────────────────────────────────────
 
-  const handleCreateNew = () => {
-    setPrefill(null);
-    setEditingTemplate(null);
-    setFormOpen(true);
-  };
+  const allTemplates = [
+    ...templates,
+    ...(filterTab !== "custom"
+      ? BUILTIN_TEMPLATES.map((t) => ({
+          ...t,
+          isBuiltIn: true,
+          designJson: null,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        }))
+      : []),
+  ];
 
-  // Apply prefill when form opens with builtin
-  const formInitial = editingTemplate
-    ? editingTemplate
-    : prefill
-      ? ({
-          id: "",
-          name: prefill.name,
-          subject: prefill.subject,
-          body: prefill.body,
-          category: prefill.category,
-          description: "",
-          isBuiltIn: false,
-          createdAt: "",
-          updatedAt: "",
-        } as EmailTemplate)
-      : null;
-
-  const filtered = templates.filter((t) => {
-    const matchesSearch =
-      !search ||
-      t.name.toLowerCase().includes(search.toLowerCase()) ||
-      (t.description ?? "").toLowerCase().includes(search.toLowerCase());
-    const matchesCategory =
-      activeCategory === "all" || t.category === activeCategory;
-    return matchesSearch && matchesCategory;
+  const filtered = allTemplates.filter((t) => {
+    if (filterTab === "custom" && t.isBuiltIn) return false;
+    if (filterTab === "builtin" && !t.isBuiltIn) return false;
+    if (filterCategory !== "all" && t.category !== filterCategory) return false;
+    if (search) {
+      const q = search.toLowerCase();
+      return (
+        t.name.toLowerCase().includes(q) ||
+        (t.description || "").toLowerCase().includes(q) ||
+        t.category.toLowerCase().includes(q)
+      );
+    }
+    return true;
   });
+
+  // ── Visual builder with initial blocks ───────────────────────────────────
+
+  const getInitialBlocks = (): EmailBlock[] | undefined => {
+    if (!editingTemplate?.designJson) return undefined;
+    try {
+      const parsed: DesignJson = JSON.parse(editingTemplate.designJson);
+      return parsed.blocks;
+    } catch {
+      return undefined;
+    }
+  };
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // VISUAL BUILDER FULL-SCREEN (replaces the whole page content)
+  // ─────────────────────────────────────────────────────────────────────────
+
+  if (showVisualBuilder) {
+    return (
+      <VisualEmailBuilder
+        initialBlocks={getInitialBlocks()}
+        initialDesignJson={editingTemplate?.designJson}
+        templateName={editingTemplate?.name || "New Template"}
+        onSave={handleVisualSave}
+        onBack={() => {
+          setShowVisualBuilder(false);
+          setEditingTemplate(null);
+        }}
+        isSaving={isSaving}
+      />
+    );
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // MAIN TEMPLATE MANAGER UI
+  // ─────────────────────────────────────────────────────────────────────────
 
   return (
     <div className="space-y-6">
-      {/* Header actions */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-2">
-          <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-            <Input
-              placeholder="Search templates..."
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="pl-9 w-64 h-9 text-sm"
-            />
+      {/* Toast */}
+      {toast && (
+        <div
+          className={`fixed top-4 right-4 z-50 flex items-center gap-2 px-4 py-3 rounded-xl shadow-lg text-sm font-medium transition-all ${toast.type === "success" ? "bg-green-600 text-white" : "bg-red-600 text-white"}`}
+        >
+          {toast.type === "success" ? (
+            <CheckCircle className="h-4 w-4" />
+          ) : (
+            <AlertCircle className="h-4 w-4" />
+          )}
+          {toast.msg}
+        </div>
+      )}
+
+      {/* Header */}
+      <div className="flex items-center justify-between flex-wrap gap-4">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Email Templates</h1>
+          <p className="text-sm text-gray-500 mt-0.5">
+            {templates.length} custom template
+            {templates.length !== 1 ? "s" : ""} · Visual & text editors
+          </p>
+        </div>
+        <Button onClick={handleNewTemplate} className="flex items-center gap-2">
+          <Plus className="h-4 w-4" /> New Template
+        </Button>
+      </div>
+
+      {/* Filters */}
+      <div className="bg-white border border-gray-200 rounded-2xl p-4 space-y-3">
+        <div className="flex flex-wrap gap-3">
+          {/* Tab filter */}
+          <div className="flex bg-gray-100 rounded-xl p-1 gap-0.5">
+            {[
+              { key: "all", label: "All" },
+              { key: "custom", label: "My Templates" },
+              { key: "builtin", label: "Built-in" },
+            ].map((tab) => (
+              <button
+                key={tab.key}
+                onClick={() => setFilterTab(tab.key as any)}
+                className={`px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${filterTab === tab.key ? "bg-white shadow-sm text-gray-900" : "text-gray-500 hover:text-gray-700"}`}
+              >
+                {tab.label}
+              </button>
+            ))}
           </div>
-          <Select value={activeCategory} onValueChange={setActiveCategory}>
-            <SelectTrigger className="w-40 h-9 text-sm">
+
+          {/* Category filter */}
+          <Select value={filterCategory} onValueChange={setFilterCategory}>
+            <SelectTrigger className="w-[160px] text-sm h-9">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -838,128 +1017,149 @@ export function TemplatesManager() {
               ))}
             </SelectContent>
           </Select>
-        </div>
 
-        <div className="flex items-center gap-2">
-          <Button variant="outline" onClick={() => setBuiltinOpen(true)}>
-            <Sparkles className="h-4 w-4 mr-2" />
-            Start from Template
-          </Button>
-          <Button onClick={handleCreateNew}>
-            <Plus className="h-4 w-4 mr-2" />
-            New Template
-          </Button>
-        </div>
-      </div>
-
-      {/* Category tabs */}
-      <div className="flex gap-1.5 flex-wrap">
-        {CATEGORIES.map((c) => (
-          <button
-            key={c.value}
-            onClick={() => setActiveCategory(c.value)}
-            className={`px-3 py-1.5 rounded-full text-xs font-medium transition-colors ${
-              activeCategory === c.value
-                ? "bg-blue-600 text-white shadow-sm"
-                : "bg-gray-100 text-gray-600 hover:bg-gray-200"
-            }`}
-          >
-            {c.label}
-            {c.value !== "all" && (
-              <span className="ml-1.5 opacity-70">
-                ({templates.filter((t) => t.category === c.value).length})
-              </span>
+          {/* Search */}
+          <div className="flex-1 min-w-[200px] relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Input
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search templates..."
+              className="pl-9 h-9 text-sm"
+            />
+            {search && (
+              <button
+                onClick={() => setSearch("")}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
             )}
-          </button>
-        ))}
+          </div>
+        </div>
       </div>
 
       {/* Grid */}
       {isLoading ? (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
-          {[...Array(6)].map((_, i) => (
+          {[...Array(8)].map((_, i) => (
             <div
               key={i}
-              className="bg-white border border-gray-200 rounded-xl overflow-hidden animate-pulse"
+              className="bg-white border border-gray-200 rounded-2xl overflow-hidden animate-pulse"
             >
               <div className="h-36 bg-gray-100" />
               <div className="p-4 space-y-2">
                 <div className="h-4 bg-gray-100 rounded w-3/4" />
-                <div className="h-3 bg-gray-100 rounded w-1/2" />
-                <div className="h-7 bg-gray-100 rounded mt-3" />
+                <div className="h-3 bg-gray-50 rounded w-full" />
+                <div className="h-3 bg-gray-50 rounded w-2/3" />
               </div>
             </div>
           ))}
         </div>
       ) : filtered.length === 0 ? (
-        <div className="text-center py-20 bg-white border border-gray-200 rounded-xl">
-          <LayoutTemplate className="mx-auto h-12 w-12 text-gray-300 mb-4" />
-          <h3 className="text-base font-semibold text-gray-700">
-            {search || activeCategory !== "all"
-              ? "No templates match your filters"
+        <div className="text-center py-20 bg-white border border-gray-200 rounded-2xl">
+          <LayoutTemplate className="mx-auto h-12 w-12 text-gray-200 mb-4" />
+          <p className="text-base font-semibold text-gray-600 mb-1">
+            {search || filterCategory !== "all"
+              ? "No templates match your search"
               : "No templates yet"}
-          </h3>
-          <p className="text-sm text-gray-400 mt-1 mb-6">
-            {search || activeCategory !== "all"
-              ? "Try clearing your search or filter"
-              : "Create your first template or start from a built-in one"}
           </p>
-          <div className="flex items-center justify-center gap-3">
-            <Button variant="outline" onClick={() => setBuiltinOpen(true)}>
-              <Sparkles className="h-4 w-4 mr-2" /> Start from Template
+          <p className="text-sm text-gray-400 mb-6">
+            {search
+              ? "Try different search terms or clear filters."
+              : "Create your first template to get started."}
+          </p>
+          {!search && (
+            <Button onClick={handleNewTemplate}>
+              <Plus className="mr-1.5 h-4 w-4" /> Create Template
             </Button>
-            <Button onClick={handleCreateNew}>
-              <Plus className="h-4 w-4 mr-2" /> New Template
-            </Button>
-          </div>
+          )}
         </div>
       ) : (
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-5">
           {filtered.map((template) => (
             <TemplateCard
               key={template.id}
-              template={template}
-              onPreview={() => setPreviewTemplate(template)}
-              onEdit={() => handleEdit(template)}
-              onDelete={() => handleDelete(template.id)}
-              onDuplicate={() => handleDuplicate(template)}
+              template={template as EmailTemplate}
+              onPreview={() => {
+                setPreviewTemplate(template as EmailTemplate);
+                setShowPreview(true);
+              }}
+              onEdit={() => handleEdit(template as EmailTemplate)}
+              onDuplicate={() => handleDuplicate(template as EmailTemplate)}
+              onDelete={() => setDeleteTarget(template as EmailTemplate)}
             />
           ))}
         </div>
       )}
 
-      {/* Stats bar */}
-      {templates.length > 0 && (
-        <p className="text-xs text-gray-400 text-center">
-          {filtered.length} template{filtered.length !== 1 ? "s" : ""} shown
-          {templates.length !== filtered.length
-            ? ` of ${templates.length} total`
-            : ""}
-        </p>
-      )}
+      {/* Variables reference banner */}
+      <div className="flex items-start gap-3 bg-blue-50 border border-blue-200 rounded-xl p-4">
+        <Braces className="h-5 w-5 text-blue-500 shrink-0 mt-0.5" />
+        <div>
+          <p className="text-sm font-semibold text-blue-800 mb-0.5">
+            Dynamic variables in templates
+          </p>
+          <p className="text-xs text-blue-600">
+            Use{" "}
+            <code className="bg-blue-100 px-1 py-0.5 rounded font-mono">
+              {"{first_name}"}
+            </code>
+            ,{" "}
+            <code className="bg-blue-100 px-1 py-0.5 rounded font-mono">
+              {"{last_name}"}
+            </code>
+            ,{" "}
+            <code className="bg-blue-100 px-1 py-0.5 rounded font-mono">
+              {"{full_name}"}
+            </code>
+            ,{" "}
+            <code className="bg-blue-100 px-1 py-0.5 rounded font-mono">
+              {"{email}"}
+            </code>
+            ,{" "}
+            <code className="bg-blue-100 px-1 py-0.5 rounded font-mono">
+              {"{company}"}
+            </code>{" "}
+            anywhere in your templates. Each recipient will see their own data
+            when the email is sent.
+          </p>
+        </div>
+      </div>
 
       {/* Modals */}
+      {showModePicker && <EditorModePicker onSelect={handleModeSelected} />}
+
+      <TextTemplateForm
+        open={showTextForm}
+        onClose={() => {
+          setShowTextForm(false);
+          setEditingTemplate(null);
+        }}
+        onSaved={() => {
+          fetchTemplates();
+          showToast(
+            editingTemplate ? "Template updated!" : "Template created!",
+          );
+        }}
+        editing={editingTemplate}
+      />
+
       <PreviewModal
-        open={!!previewTemplate}
-        onClose={() => setPreviewTemplate(null)}
+        open={showPreview}
+        onClose={() => {
+          setShowPreview(false);
+          setPreviewTemplate(null);
+        }}
         template={previewTemplate}
       />
 
-      <TemplateFormModal
-        open={formOpen}
-        onClose={() => {
-          setFormOpen(false);
-          setEditingTemplate(null);
-          setPrefill(null);
-        }}
-        onSaved={fetchTemplates}
-        editing={formInitial}
-      />
-
-      <BuiltinTemplatePicker
-        open={builtinOpen}
-        onClose={() => setBuiltinOpen(false)}
-        onSelect={handleSelectBuiltin}
+      <DeleteConfirmDialog
+        open={!!deleteTarget}
+        template={deleteTarget}
+        onConfirm={handleDelete}
+        onCancel={() => setDeleteTarget(null)}
+        isDeleting={isDeleting}
       />
     </div>
   );

@@ -114,7 +114,6 @@ export async function POST(request: NextRequest) {
             phone: c.phone?.trim() || undefined,
             contactListId: list.id,
           })),
-          skipDuplicates: true,
         });
       }
 

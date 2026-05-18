@@ -59,12 +59,12 @@ export async function POST(req: NextRequest) {
     }
 
     // If campaign, find by campaignId
-    if (!emailHistoryId && campaign_id) {
-      const emailHistory = await prisma.emailHistory.findFirst({
-        where: { campaignId: campaign_id },
-      });
-      emailHistoryId = emailHistory?.id;
-    }
+    // if (!emailHistoryId && campaign_id) {
+    //   const emailHistory = await prisma.emailHistory.findFirst({
+    //     where: { campaignId: campaign_id },
+    //   });
+    //   emailHistoryId = emailHistory?.id;
+    // }
 
     if (!emailHistoryId) {
       console.warn("Brevo webhook: No emailHistoryId found");

@@ -1,52 +1,120 @@
-// app/api/email-history/route.ts - UPDATED FOR BREVO
+// app/api/email-history/route.ts - UPDATED FOR RESEND
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/app/_lib/auth/session";
 import prisma from "@/app/_lib/db/prisma";
-import { brevo } from "@/app/_lib/email/brevo-client";
+import { resend } from "@/app/_lib/email/resend-client";
 
-
-
-
-// Refresh email stats from Brevo
+// Refresh email stats from Resend manually
 export async function PUT(request: NextRequest) {
   try {
-
     const user = await requireAuth();
 
+    // Fetch all email histories for the authenticated user containing batch IDs
     const emailHistories = await prisma.emailHistory.findMany({
       where: { userId: user.id },
-      select: { id: true, campaignId: true, sendMethod: true },
+      select: { id: true, batchIds: true },
     });
 
-    
-
     for (const history of emailHistories) {
-      if (!history.campaignId) continue;
+      if (!history.batchIds || history.batchIds.length === 0) continue;
 
-      try {
-        let stats;
+      let deliveredCount = 0;
+      let openedCount = 0;
+      let clickedCount = 0;
+      let bouncedCount = 0;
+      let failedCount = 0;
+      let complainedCount = 0;
+      let unsubscribedCount = 0;
 
-        if (history.sendMethod === "campaign") {
-          // Get campaign statistics
-                    console.log(stats,history.campaignId);
+      // Poll each individual Resend Message ID to get its live state
+      for (const batchId of history.batchIds) {
+        try {
+          const { data, error } = await resend.emails.get(batchId);
+          if (error || !data) {
+            console.error(`Resend API Error for ID ${batchId}:`, error);
+            continue;
+          }
 
-          stats = (await brevo.getCampaignStats(history.campaignId)).statistics;
-          console.log(stats);
-          
-          await prisma.emailHistory.update({
-            where: { id: history.id },
-            data: {
-              deliveredCount: stats.campaignStats[0]?.delivered || 0,
-              openedCount: stats.campaignStats[0]?.uniqueViews || 0,
-              clickedCount: stats.campaignStats[0]?.uniqueClicks || 0,
-              bouncedCount: stats.campaignStats[0]?.hardBounces + stats.campaignStats?.softBounces || 0,
-              failedCount: stats.campaignStats[0]?.hardBounces || 0,
-            },
-          });
+          const lastEvent = data.last_event; // e.g., "sent" | "delivered" | "opened" | "clicked" | "bounced" | "failed"
+          const recipientEmail = Array.isArray(data.to)
+            ? data.to[0]
+            : data.to || "";
+
+          // 1. Sync individual recipient event records to match webhook architecture
+          if (recipientEmail && lastEvent) {
+            const existingEvent = await prisma.emailRecipientEvent.findFirst({
+              where: {
+                emailHistoryId: history.id,
+                recipientEmail,
+                resendMessageId: batchId,
+              },
+            });
+
+            if (!existingEvent) {
+              await prisma.emailRecipientEvent.create({
+                data: {
+                  emailHistoryId: history.id,
+                  recipientEmail,
+                  status: lastEvent,
+                  resendMessageId: batchId,
+                },
+              });
+            } else if (existingEvent.status !== lastEvent) {
+              await prisma.emailRecipientEvent.update({
+                where: { id: existingEvent.id },
+                data: { status: lastEvent },
+              });
+            }
+          }
+
+          // 2. Aggregate totals based on the absolute latest event state
+          switch (lastEvent) {
+            case "delivered":
+              deliveredCount++;
+              break;
+            case "opened":
+              deliveredCount++;
+              openedCount++;
+              break;
+            case "clicked":
+              deliveredCount++;
+              openedCount++;
+              clickedCount++;
+              break;
+            case "bounced":
+              bouncedCount++;
+              break;
+            case "failed":
+              failedCount++;
+              break;
+            case "complained":
+              complainedCount++;
+              break;
+            default:
+              // "sent" or unhandled states don't increment tracking counters
+              break;
+          }
+        } catch (error) {
+          console.error(
+            `Failed to fetch stats for batch item ${batchId}:`,
+            error,
+          );
         }
-      } catch (error) {
-        console.error(`Failed to update stats for history ${history.id}:`, error);
       }
+
+      // 3. Overwrite the summary tallies with fully reconciled numbers
+      await prisma.emailHistory.update({
+        where: { id: history.id },
+        data: {
+          deliveredCount,
+          openedCount,
+          clickedCount,
+          bouncedCount,
+          failedCount,
+          complainedCount,
+          unsubscribedCount,
+        },
+      });
     }
 
     return NextResponse.json({ success: true });
@@ -54,7 +122,7 @@ export async function PUT(request: NextRequest) {
     console.error("Error refreshing email history:", error);
     return NextResponse.json(
       { error: "Failed to refresh email history" },
-      { status: 500 }
+      { status: 500 },
     );
   }
 }

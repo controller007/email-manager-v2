@@ -1,4 +1,7 @@
-// app/api/templates/route.ts
+// app/api/templates/route.ts — UPDATED
+// Only change: accepts and stores the designJson field from the visual builder.
+// All existing GET/POST logic is preserved exactly.
+
 import { type NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/app/_lib/auth/session";
 import prisma from "@/app/_lib/db/prisma";
@@ -33,7 +36,15 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { name, description, subject, body: templateBody, category } = body;
+    // designJson is new — optional, sent by visual builder
+    const {
+      name,
+      description,
+      subject,
+      body: templateBody,
+      category,
+      designJson,
+    } = body;
 
     if (!name?.trim()) {
       return NextResponse.json(
@@ -54,6 +65,8 @@ export async function POST(request: NextRequest) {
         description: description?.trim() || undefined,
         subject: subject?.trim() || undefined,
         body: templateBody,
+        // Store visual builder block state — null for plain text templates
+        ...(designJson ? { designJson } : {}),
         category: category || "custom",
         isBuiltIn: false,
         userId: session.user.id,

@@ -1,7 +1,8 @@
 "use client";
 
+
 import type React from "react";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/app/_components/ui/button";
 import { Input } from "@/app/_components/ui/input";
@@ -43,10 +44,18 @@ import {
   X,
   CheckCircle,
   Sparkles,
+  Wand2,
+  Type,
+  Braces,
+  ChevronRight,
+  Copy,
+  Mail,
 } from "lucide-react";
 import { BUILTIN_TEMPLATES } from "../_lib/email/templates";
 
-// ── Types ─────────────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface ContactList {
   id: string;
@@ -70,6 +79,7 @@ interface SavedTemplate {
   description?: string | null;
   subject?: string | null;
   body: string;
+  designJson?: string | null;
   category: string;
 }
 
@@ -78,13 +88,36 @@ interface EmailComposerProps {
   senders: Sender[];
 }
 
-// ── HTML wrapper for accurate preview ────────────────────────────────────────
+const VARIABLES = [
+  { label: "First Name", token: "{first_name}" },
+  { label: "Last Name", token: "{last_name}" },
+  { label: "Full Name", token: "{full_name}" },
+  { label: "Email", token: "{email}" },
+  { label: "Company", token: "{company}" },
+];
+
+const CATEGORY_COLORS: Record<string, string> = {
+  custom: "bg-gray-100 text-gray-700",
+  newsletter: "bg-blue-100 text-blue-700",
+  promo: "bg-orange-100 text-orange-700",
+  welcome: "bg-green-100 text-green-700",
+  announcement: "bg-purple-100 text-purple-700",
+  transactional: "bg-teal-100 text-teal-700",
+};
+
+// ─────────────────────────────────────────────────────────────────────────────
+// HTML preview wrapper (for plain Tiptap HTML)
+// ─────────────────────────────────────────────────────────────────────────────
 
 function buildPreviewHtml(
   body: string,
   senderName: string,
   preheader?: string,
 ) {
+  // Visual builder templates already contain full HTML
+  if (body.trim().startsWith("<!DOCTYPE") || body.trim().startsWith("<html")) {
+    return body;
+  }
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -108,8 +141,6 @@ function buildPreviewHtml(
     .body-content a{color:#2563eb;text-decoration:underline}
     .body-content strong{font-weight:700}
     .body-content em{font-style:italic}
-    .body-content u{text-decoration:underline}
-    .body-content s{text-decoration:line-through}
     .body-content blockquote{padding:12px 16px;border-left:4px solid #e5e7eb;color:#6b7280;font-style:italic;margin-bottom:16px}
     .body-content img{max-width:100%;border-radius:6px;height:auto}
     .body-content hr{border:none;border-top:1px solid #e5e7eb;margin:24px 0}
@@ -117,8 +148,6 @@ function buildPreviewHtml(
     .body-content td,.body-content th{padding:10px 12px;border:1px solid #e5e7eb;text-align:left}
     .body-content th{background:#f9fafb;font-weight:600}
     .body-content code{background:#f3f4f6;padding:2px 6px;border-radius:4px;font-family:monospace;font-size:13px}
-    .body-content pre{background:#1e1e2e;color:#cdd6f4;padding:16px;border-radius:8px;overflow-x:auto;margin-bottom:16px}
-    .body-content pre code{background:transparent;color:inherit;padding:0}
     @media(max-width:600px){.body-content{padding:24px 20px!important}.footer{padding:16px 20px!important}}
   </style>
 </head>
@@ -127,7 +156,7 @@ function buildPreviewHtml(
     <div class="container">
       <div class="body-content">${body || '<p style="color:#9ca3af;">Your email content will appear here...</p>'}</div>
       <div class="footer">
-        <p>Sent by <strong>${senderName || "Your Name"}</strong> · <a href="#">Unsubscribe</a></p>
+        <p>Sent by <strong>${senderName || "Your Brand"}</strong> · <a href="#">Unsubscribe</a></p>
       </div>
     </div>
   </div>
@@ -135,7 +164,9 @@ function buildPreviewHtml(
 </html>`;
 }
 
-// ── Preview Modal (iframe-based, accurate) ────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Enhanced Preview Modal
+// ─────────────────────────────────────────────────────────────────────────────
 
 function PreviewModal({
   open,
@@ -160,7 +191,7 @@ function PreviewModal({
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-5xl h-[92vh] flex flex-col p-0 gap-0">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-200 bg-white rounded-t-xl">
+        <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-200 bg-white rounded-t-xl shrink-0">
           <div>
             <DialogTitle className="text-sm font-semibold text-gray-900">
               Email Preview
@@ -173,21 +204,13 @@ function PreviewModal({
             <div className="flex bg-gray-100 rounded-lg p-0.5 gap-0.5">
               <button
                 onClick={() => setViewMode("desktop")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                  viewMode === "desktop"
-                    ? "bg-white shadow-sm text-gray-900"
-                    : "text-gray-500 hover:text-gray-700"
-                }`}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${viewMode === "desktop" ? "bg-white shadow-sm text-gray-900" : "text-gray-500 hover:text-gray-700"}`}
               >
                 <Monitor className="h-3.5 w-3.5" /> Desktop
               </button>
               <button
                 onClick={() => setViewMode("mobile")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                  viewMode === "mobile"
-                    ? "bg-white shadow-sm text-gray-900"
-                    : "text-gray-500 hover:text-gray-700"
-                }`}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${viewMode === "mobile" ? "bg-white shadow-sm text-gray-900" : "text-gray-500 hover:text-gray-700"}`}
               >
                 <Smartphone className="h-3.5 w-3.5" /> Mobile
               </button>
@@ -202,7 +225,7 @@ function PreviewModal({
         </div>
 
         {/* Inbox chrome */}
-        <div className="px-5 py-3 bg-white border-b border-gray-100">
+        <div className="px-5 py-3 bg-white border-b border-gray-100 shrink-0">
           <div className="flex items-start gap-3">
             <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center text-white text-sm font-bold shrink-0">
               {senderName?.charAt(0)?.toUpperCase() || "S"}
@@ -230,48 +253,74 @@ function PreviewModal({
         </div>
 
         {/* Iframe preview */}
-        <div className="flex-1 overflow-auto bg-gray-100 p-6 flex justify-center">
-          <div
-            className="bg-white shadow-lg rounded-2xl overflow-hidden transition-all duration-300"
-            style={{
-              width: viewMode === "mobile" ? "390px" : "100%",
-              maxWidth: viewMode === "mobile" ? "390px" : "720px",
-            }}
-          >
-            <iframe
-              srcDoc={buildPreviewHtml(body, senderName, preheader)}
-              title="Email preview"
-              className="w-full border-0"
-              style={{ height: "600px" }}
-              sandbox="allow-same-origin"
-            />
-          </div>
+        <div className="flex-1 overflow-auto bg-gray-200 p-6 flex justify-center">
+          {viewMode === "mobile" ? (
+            <div
+              className="relative bg-gray-900 rounded-[2.5rem] p-3 pb-4 shadow-2xl"
+              style={{ width: 410 }}
+            >
+              <div className="absolute top-3 left-1/2 -translate-x-1/2 w-16 h-1.5 bg-gray-700 rounded-full" />
+              <div className="bg-white rounded-[2rem] overflow-hidden mt-3">
+                <iframe
+                  srcDoc={buildPreviewHtml(body, senderName, preheader)}
+                  title="Mobile preview"
+                  className="w-full border-0 block"
+                  style={{ height: 640 }}
+                  sandbox="allow-same-origin"
+                />
+              </div>
+            </div>
+          ) : (
+            <div className="bg-white rounded-2xl shadow-2xl overflow-hidden w-full max-w-3xl">
+              <div className="bg-gray-100 px-4 py-2.5 flex items-center gap-2 border-b border-gray-200">
+                <div className="flex gap-1.5">
+                  {["bg-red-400", "bg-yellow-400", "bg-green-400"].map(
+                    (c, i) => (
+                      <div
+                        key={i}
+                        className={`w-2.5 h-2.5 rounded-full ${c}`}
+                      />
+                    ),
+                  )}
+                </div>
+                <div className="flex-1 bg-white border border-gray-200 rounded-md px-3 py-0.5 text-xs text-gray-400">
+                  Campaign Preview
+                </div>
+              </div>
+              <iframe
+                srcDoc={buildPreviewHtml(body, senderName, preheader)}
+                title="Desktop preview"
+                className="w-full border-0 block"
+                style={{ height: 680 }}
+                sandbox="allow-same-origin"
+              />
+            </div>
+          )}
         </div>
       </DialogContent>
     </Dialog>
   );
 }
 
-// ── Template Picker (built-in + saved) ───────────────────────────────────────
-
-const CATEGORY_COLORS: Record<string, string> = {
-  custom: "bg-gray-100 text-gray-700",
-  newsletter: "bg-blue-100 text-blue-700",
-  promo: "bg-orange-100 text-orange-700",
-  welcome: "bg-green-100 text-green-700",
-  announcement: "bg-purple-100 text-purple-700",
-  transactional: "bg-teal-100 text-teal-700",
-};
+// ─────────────────────────────────────────────────────────────────────────────
+// Template Picker (enhanced — shows visual badge, mini preview)
+// ─────────────────────────────────────────────────────────────────────────────
 
 function TemplatePicker({
   onSelect,
 }: {
-  onSelect: (t: { name?: string; subject?: string; body: string }) => void;
+  onSelect: (t: {
+    name?: string;
+    subject?: string;
+    body: string;
+    isVisual: boolean;
+  }) => void;
 }) {
   const [open, setOpen] = useState(false);
   const [savedTemplates, setSavedTemplates] = useState<SavedTemplate[]>([]);
   const [activeTab, setActiveTab] = useState<"saved" | "builtin">("saved");
   const [isLoading, setIsLoading] = useState(false);
+  const [search, setSearch] = useState("");
 
   const loadSaved = async () => {
     setIsLoading(true);
@@ -280,7 +329,6 @@ function TemplatePicker({
       if (res.ok) {
         const data = await res.json();
         setSavedTemplates(data);
-        // Default to builtin if no saved templates
         if (data.length === 0) setActiveTab("builtin");
       }
     } finally {
@@ -294,12 +342,30 @@ function TemplatePicker({
 
   const handleSelect = (t: {
     name?: string;
-    subject?: string;
+    subject?: string | null;
     body: string;
+    designJson?: string | null;
   }) => {
-    onSelect(t);
+    onSelect({
+      name: t.name,
+      subject: t.subject ?? undefined,
+      body: t.body,
+      isVisual: !!t.designJson,
+    });
     setOpen(false);
   };
+
+  const templates =
+    activeTab === "saved"
+      ? savedTemplates
+      : BUILTIN_TEMPLATES.map((t) => ({ ...t, designJson: null }));
+  const filtered = search
+    ? templates.filter(
+        (t) =>
+          t.name.toLowerCase().includes(search.toLowerCase()) ||
+          (t.description || "").toLowerCase().includes(search.toLowerCase()),
+      )
+    : templates;
 
   return (
     <>
@@ -315,16 +381,16 @@ function TemplatePicker({
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-3xl max-h-[82vh] flex flex-col p-0 gap-0">
-          <div className="px-6 py-4 border-b border-gray-200">
+          <div className="px-6 py-4 border-b border-gray-200 shrink-0">
             <DialogTitle>Choose a Template</DialogTitle>
             <DialogDescription>
-              Select a template to pre-fill your editor. You can edit everything
-              after.
+              Select a template to pre-fill your email body. You can edit
+              content after selecting.
             </DialogDescription>
           </div>
 
           {/* Tabs */}
-          <div className="flex gap-0 border-b border-gray-200 px-6">
+          <div className="flex border-b border-gray-200 px-6 shrink-0">
             {[
               {
                 key: "saved",
@@ -338,15 +404,25 @@ function TemplatePicker({
               <button
                 key={tab.key}
                 onClick={() => setActiveTab(tab.key as any)}
-                className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${
-                  activeTab === tab.key
-                    ? "border-blue-600 text-blue-600"
-                    : "border-transparent text-gray-500 hover:text-gray-700"
-                }`}
+                className={`px-4 py-3 text-sm font-medium border-b-2 transition-colors ${activeTab === tab.key ? "border-blue-600 text-blue-600" : "border-transparent text-gray-500 hover:text-gray-700"}`}
               >
                 {tab.label}
               </button>
             ))}
+          </div>
+
+          {/* Search */}
+          <div className="px-6 py-3 border-b border-gray-100 shrink-0">
+            <div className="relative">
+              <Sparkles className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
+              <input
+                type="text"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search templates..."
+                className="w-full pl-9 pr-3 py-1.5 text-sm border border-gray-200 rounded-lg focus:outline-none focus:ring-1 focus:ring-blue-500"
+              />
+            </div>
           </div>
 
           <div className="flex-1 overflow-y-auto p-6">
@@ -355,7 +431,7 @@ function TemplatePicker({
                 {[...Array(4)].map((_, i) => (
                   <div
                     key={i}
-                    className="h-24 bg-gray-100 rounded-xl animate-pulse"
+                    className="h-28 bg-gray-100 rounded-xl animate-pulse"
                   />
                 ))}
               </div>
@@ -366,8 +442,7 @@ function TemplatePicker({
                   No saved templates yet
                 </p>
                 <p className="text-xs text-gray-400 mt-1">
-                  Create templates on the Templates page, or switch to Built-in
-                  below.
+                  Create templates on the Templates page, or switch to Built-in.
                 </p>
                 <Button
                   variant="outline"
@@ -381,31 +456,29 @@ function TemplatePicker({
               </div>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {(activeTab === "saved"
-                  ? savedTemplates
-                  : BUILTIN_TEMPLATES
-                ).map((template) => (
+                {filtered.map((template) => (
                   <button
                     key={template.id}
                     type="button"
-                    onClick={() =>
-                      handleSelect({
-                        name: template.name,
-                        subject: template.subject ?? undefined,
-                        body: template.body,
-                      })
-                    }
+                    onClick={() => handleSelect(template)}
                     className="text-left p-4 rounded-xl border border-gray-200 hover:border-blue-400 hover:bg-blue-50/40 transition-all group"
                   >
                     <div className="flex items-start justify-between mb-1.5">
                       <span className="font-semibold text-sm text-gray-900 group-hover:text-blue-700 truncate pr-2">
                         {template.name}
                       </span>
-                      <Badge
-                        className={`text-xs shrink-0 ${CATEGORY_COLORS[template.category] || CATEGORY_COLORS.custom}`}
-                      >
-                        {template.category}
-                      </Badge>
+                      <div className="flex items-center gap-1 shrink-0">
+                        {"designJson" in template && template.designJson && (
+                          <span className="inline-flex items-center gap-0.5 bg-blue-50 border border-blue-200 text-blue-600 text-[9px] font-semibold px-1.5 py-0.5 rounded-full">
+                            <Wand2 className="h-2 w-2" /> Visual
+                          </span>
+                        )}
+                        <Badge
+                          className={`text-[10px] shrink-0 ${CATEGORY_COLORS[template.category] || CATEGORY_COLORS.custom}`}
+                        >
+                          {template.category}
+                        </Badge>
+                      </div>
                     </div>
                     {template.description && (
                       <p className="text-xs text-gray-500 line-clamp-2">
@@ -417,6 +490,9 @@ function TemplatePicker({
                         Subject: {template.subject}
                       </p>
                     )}
+                    <div className="mt-2 flex items-center gap-1 text-blue-500 text-xs font-medium opacity-0 group-hover:opacity-100 transition-opacity">
+                      Use this template <ChevronRight className="h-3 w-3" />
+                    </div>
                   </button>
                 ))}
               </div>
@@ -428,10 +504,98 @@ function TemplatePicker({
   );
 }
 
-// ── Main Composer ─────────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+// Visual Body Preview (inline, read-only, shown when template body is visual HTML)
+// ─────────────────────────────────────────────────────────────────────────────
+
+function VisualBodyPreview({
+  html,
+  onClear,
+}: {
+  html: string;
+  onClear: () => void;
+}) {
+  return (
+    <div className="border border-blue-200 rounded-xl overflow-hidden">
+      {/* Header bar */}
+      <div className="flex items-center justify-between px-3 py-2 bg-blue-50 border-b border-blue-200">
+        <div className="flex items-center gap-2">
+          <Wand2 className="h-3.5 w-3.5 text-blue-600" />
+          <span className="text-xs font-semibold text-blue-700">
+            Visual template loaded
+          </span>
+          <span className="text-xs text-blue-500">
+            — full HTML email. Use "Use Template" to change.
+          </span>
+        </div>
+        <button
+          onClick={onClear}
+          className="text-xs text-blue-500 hover:text-blue-700 flex items-center gap-1"
+        >
+          <X className="h-3 w-3" /> Clear
+        </button>
+      </div>
+      {/* Scaled preview */}
+      <div
+        className="relative overflow-hidden bg-gray-50"
+        style={{ height: 280 }}
+      >
+        <div
+          className="absolute inset-0"
+          style={{
+            transform: "scale(0.5) translateX(-50%) translateY(-50%)",
+            transformOrigin: "top left",
+            width: "200%",
+            top: "50%",
+            left: "50%",
+          }}
+        >
+          <iframe
+            srcDoc={html}
+            title="Email body preview"
+            className="w-full border-0 block"
+            style={{ height: 560 }}
+            sandbox="allow-same-origin"
+          />
+        </div>
+        <div className="absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-gray-50 to-transparent pointer-events-none" />
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Variable Quick-Insert Strip
+// ─────────────────────────────────────────────────────────────────────────────
+
+function VariableStrip({ onInsert }: { onInsert: (token: string) => void }) {
+  return (
+    <div className="flex items-center gap-2 flex-wrap">
+      <span className="text-xs text-gray-400 flex items-center gap-1 shrink-0">
+        <Braces className="h-3 w-3" /> Variables:
+      </span>
+      {VARIABLES.map((v) => (
+        <button
+          key={v.token}
+          type="button"
+          onClick={() => onInsert(v.token)}
+          className="text-xs px-2 py-0.5 bg-blue-50 hover:bg-blue-100 border border-blue-200 text-blue-700 rounded-md font-mono transition-colors"
+          title={`Insert ${v.label}`}
+        >
+          {v.token}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Main Composer
+// ─────────────────────────────────────────────────────────────────────────────
 
 export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
   const searchParams = useSearchParams();
+  const router = useRouter();
 
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
@@ -443,7 +607,13 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
   const [success, setSuccess] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
-  const router = useRouter();
+  const [bodyIsVisual, setBodyIsVisual] = useState(false); // true when body is full visual HTML
+
+  // Body editor mode
+  const [editorMode, setEditorMode] = useState<"text" | "visual-preview">(
+    "text",
+  );
+  // "text" = Tiptap, "visual-preview" = loaded visual template (read-only inline iframe + can switch back)
 
   const selectedList = contactLists.find((l) => l.id === selectedListId);
   const selectedSender = filteredSenders.find((s) => s.id === selectedSenderId);
@@ -454,7 +624,7 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
     if (preselectedListId) setSelectedListId(preselectedListId);
   }, [searchParams]);
 
-  // Filter senders to domain of selected list
+  // Filter senders by domain of selected list
   useEffect(() => {
     if (selectedList) {
       const sendersForDomain = senders.filter(
@@ -477,6 +647,8 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
 
   const getRecipientCount = (list: ContactList) =>
     list._count?.contacts ?? list.emails.length;
+
+  // ── Submit (unchanged logic) ─────────────────────────────────────────────
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -503,7 +675,6 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(validationResult.data),
       });
-
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || "Failed to send email");
 
@@ -515,6 +686,8 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
       setPreheader("");
       setSelectedListId("");
       setSelectedSenderId("");
+      setBodyIsVisual(false);
+      setEditorMode("text");
       setTimeout(() => router.push("/email-history"), 2000);
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
@@ -523,13 +696,24 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
     }
   };
 
+  // ── Template select ──────────────────────────────────────────────────────
+
   const handleTemplateSelect = (t: {
     name?: string;
     subject?: string;
     body: string;
+    isVisual: boolean;
   }) => {
     if (t.subject) setSubject(t.subject);
     setBody(t.body);
+    setBodyIsVisual(t.isVisual);
+    setEditorMode(t.isVisual ? "visual-preview" : "text");
+  };
+
+  // ── Variable insert into subject or body ─────────────────────────────────
+
+  const insertVariableIntoSubject = (token: string) => {
+    setSubject((prev) => prev + token);
   };
 
   const canSend = subject && body && selectedListId && selectedSenderId;
@@ -537,11 +721,11 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
   return (
     <>
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-        {/* ── Composer ───────────────────────────────────────────────── */}
+        {/* ── Composer ──────────────────────────────────────────────────── */}
         <div className="lg:col-span-2">
           <Card>
             <CardHeader>
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between flex-wrap gap-3">
                 <div>
                   <CardTitle>Compose Email</CardTitle>
                   <CardDescription>
@@ -570,26 +754,23 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
 
                 {/* Contact List */}
                 <div className="space-y-2">
-                  <Label>To (Recipients) *</Label>
+                  <Label>Contact List *</Label>
                   <Select
                     value={selectedListId}
                     onValueChange={setSelectedListId}
                     disabled={isLoading}
                   >
                     <SelectTrigger>
-                      <SelectValue placeholder="Choose a contact list" />
+                      <SelectValue placeholder="Select a contact list" />
                     </SelectTrigger>
                     <SelectContent>
                       {contactLists.map((list) => (
                         <SelectItem key={list.id} value={list.id}>
                           <div className="flex items-center gap-2">
                             <span>{list.name}</span>
-                            <Badge variant="outline" className="text-xs">
-                              {list.domain.domain}
-                            </Badge>
-                            <Badge variant="secondary" className="text-xs">
-                              {getRecipientCount(list)} contacts
-                            </Badge>
+                            <span className="text-gray-400 text-xs">
+                              ({getRecipientCount(list)} recipients)
+                            </span>
                           </div>
                         </SelectItem>
                       ))}
@@ -668,7 +849,12 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
                     disabled={isLoading}
                     maxLength={200}
                   />
-                  <p className="text-xs text-gray-400">{subject.length}/200</p>
+                  <div className="flex items-center justify-between">
+                    <VariableStrip onInsert={insertVariableIntoSubject} />
+                    <span className="text-xs text-gray-400 shrink-0">
+                      {subject.length}/200
+                    </span>
+                  </div>
                 </div>
 
                 {/* Preheader */}
@@ -690,12 +876,51 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
 
                 {/* Body */}
                 <div className="space-y-2">
-                  <Label>Email Content *</Label>
-                  <RichTextEditor
-                    content={body}
-                    onChange={setBody}
-                    placeholder="Write your email content here..."
-                  />
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <Label>Email Content *</Label>
+
+                    {/* Editor mode toggle */}
+                    {bodyIsVisual && (
+                      <div className="flex items-center gap-2">
+                        <span className="inline-flex items-center gap-1 text-xs text-blue-600 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full font-medium">
+                          <Wand2 className="h-2.5 w-2.5" /> Visual template
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBody("");
+                            setBodyIsVisual(false);
+                            setEditorMode("text");
+                          }}
+                          className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
+                        >
+                          <Type className="h-3 w-3" /> Switch to plain text
+                        </button>
+                      </div>
+                    )}
+                    {!bodyIsVisual && body && (
+                      <span className="text-xs text-gray-400 flex items-center gap-1">
+                        <Type className="h-3 w-3" /> Rich text
+                      </span>
+                    )}
+                  </div>
+
+                  {editorMode === "visual-preview" && bodyIsVisual ? (
+                    <VisualBodyPreview
+                      html={body}
+                      onClear={() => {
+                        setBody("");
+                        setBodyIsVisual(false);
+                        setEditorMode("text");
+                      }}
+                    />
+                  ) : (
+                    <RichTextEditor
+                      content={body}
+                      onChange={setBody}
+                      placeholder="Write your email content here..."
+                    />
+                  )}
                 </div>
 
                 {/* Actions */}
@@ -706,8 +931,7 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
                     onClick={() => setShowPreview(true)}
                     disabled={!body}
                   >
-                    <Eye className="mr-2 h-4 w-4" />
-                    Preview
+                    <Eye className="mr-2 h-4 w-4" /> Preview
                   </Button>
                   <Button
                     type="submit"
@@ -721,8 +945,7 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
                       </>
                     ) : (
                       <>
-                        <Send className="mr-2 h-4 w-4" />
-                        Send Campaign
+                        <Send className="mr-2 h-4 w-4" /> Send Campaign
                       </>
                     )}
                   </Button>
@@ -732,8 +955,33 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
           </Card>
         </div>
 
-        {/* ── Sidebar ──────────────────────────────────────────────── */}
+        {/* ── Right Sidebar (campaign details) ──────────────────────────── */}
         <div className="space-y-6">
+          {/* Variables reference */}
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-sm flex items-center gap-2">
+                <Braces className="h-4 w-4 text-blue-600" /> Dynamic Variables
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              {VARIABLES.map((v) => (
+                <div
+                  key={v.token}
+                  className="flex items-center justify-between py-1.5 border-b border-gray-50 last:border-0"
+                >
+                  <span className="text-xs text-gray-600">{v.label}</span>
+                  <code className="text-xs font-mono text-blue-600 bg-blue-50 px-1.5 py-0.5 rounded">
+                    {v.token}
+                  </code>
+                </div>
+              ))}
+              <p className="text-xs text-gray-400 pt-1">
+                Replaced with each contact's data at send time.
+              </p>
+            </CardContent>
+          </Card>
+
           {selectedList && (
             <Card>
               <CardHeader>
@@ -805,39 +1053,6 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
               </CardContent>
             </Card>
           )}
-
-          <Card>
-            <CardHeader>
-              <CardTitle className="text-lg">Tips</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-3 text-sm text-gray-600">
-              <div>
-                <h4 className="font-medium text-gray-900">Personalisation</h4>
-                <p>
-                  Use{" "}
-                  <code className="text-xs bg-gray-100 px-1 rounded">
-                    {"{first_name}"}
-                  </code>{" "}
-                  to greet each recipient by name.
-                </p>
-              </div>
-              <div>
-                <h4 className="font-medium text-gray-900">Subject Line</h4>
-                <p>Keep it under 50 chars. Avoid spam trigger words.</p>
-              </div>
-              <div>
-                <h4 className="font-medium text-gray-900">Preheader</h4>
-                <p>Adds a preview snippet shown below the subject in inbox.</p>
-              </div>
-              <div>
-                <h4 className="font-medium text-gray-900">Max Recipients</h4>
-                <p>
-                  Contact lists are capped at <strong>100 contacts</strong> per
-                  campaign.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
         </div>
       </div>
 
@@ -847,9 +1062,9 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
         onClose={() => setShowPreview(false)}
         subject={subject}
         body={body}
-        preheader={preheader}
-        senderName={selectedSender?.name || "Your Name"}
+        senderName={selectedSender?.name || "Your Brand"}
         senderEmail={selectedSender?.email || "noreply@yourdomain.com"}
+        preheader={preheader}
       />
     </>
   );
