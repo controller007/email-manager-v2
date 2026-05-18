@@ -1,6 +1,5 @@
 "use client";
 
-
 import type React from "react";
 import { useState, useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -48,10 +47,9 @@ import {
   Type,
   Braces,
   ChevronRight,
-  Copy,
-  Mail,
+  PenLine,
 } from "lucide-react";
-import { BUILTIN_TEMPLATES } from "../_lib/email/templates";
+import { BUILTIN_TEMPLATES } from "../_lib/email/builtin-templates";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -106,7 +104,7 @@ const CATEGORY_COLORS: Record<string, string> = {
 };
 
 // ─────────────────────────────────────────────────────────────────────────────
-// HTML preview wrapper (for plain Tiptap HTML)
+// HTML preview wrapper
 // ─────────────────────────────────────────────────────────────────────────────
 
 function buildPreviewHtml(
@@ -144,10 +142,6 @@ function buildPreviewHtml(
     .body-content blockquote{padding:12px 16px;border-left:4px solid #e5e7eb;color:#6b7280;font-style:italic;margin-bottom:16px}
     .body-content img{max-width:100%;border-radius:6px;height:auto}
     .body-content hr{border:none;border-top:1px solid #e5e7eb;margin:24px 0}
-    .body-content table{width:100%;border-collapse:collapse;margin-bottom:16px}
-    .body-content td,.body-content th{padding:10px 12px;border:1px solid #e5e7eb;text-align:left}
-    .body-content th{background:#f9fafb;font-weight:600}
-    .body-content code{background:#f3f4f6;padding:2px 6px;border-radius:4px;font-family:monospace;font-size:13px}
     @media(max-width:600px){.body-content{padding:24px 20px!important}.footer{padding:16px 20px!important}}
   </style>
 </head>
@@ -165,7 +159,7 @@ function buildPreviewHtml(
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Enhanced Preview Modal
+// Preview Modal
 // ─────────────────────────────────────────────────────────────────────────────
 
 function PreviewModal({
@@ -190,7 +184,6 @@ function PreviewModal({
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-5xl h-[92vh] flex flex-col p-0 gap-0">
-        {/* Header */}
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-200 bg-white rounded-t-xl shrink-0">
           <div>
             <DialogTitle className="text-sm font-semibold text-gray-900">
@@ -224,7 +217,6 @@ function PreviewModal({
           </div>
         </div>
 
-        {/* Inbox chrome */}
         <div className="px-5 py-3 bg-white border-b border-gray-100 shrink-0">
           <div className="flex items-start gap-3">
             <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center text-white text-sm font-bold shrink-0">
@@ -252,7 +244,6 @@ function PreviewModal({
           </div>
         </div>
 
-        {/* Iframe preview */}
         <div className="flex-1 overflow-auto bg-gray-200 p-6 flex justify-center">
           {viewMode === "mobile" ? (
             <div
@@ -303,7 +294,7 @@ function PreviewModal({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Template Picker (enhanced — shows visual badge, mini preview)
+// Template Picker
 // ─────────────────────────────────────────────────────────────────────────────
 
 function TemplatePicker({
@@ -313,6 +304,7 @@ function TemplatePicker({
     name?: string;
     subject?: string;
     body: string;
+    designJson?: string | null;
     isVisual: boolean;
   }) => void;
 }) {
@@ -350,6 +342,7 @@ function TemplatePicker({
       name: t.name,
       subject: t.subject ?? undefined,
       body: t.body,
+      designJson: t.designJson ?? null,
       isVisual: !!t.designJson,
     });
     setOpen(false);
@@ -358,7 +351,8 @@ function TemplatePicker({
   const templates =
     activeTab === "saved"
       ? savedTemplates
-      : BUILTIN_TEMPLATES.map((t) => ({ ...t, designJson: null }));
+      : BUILTIN_TEMPLATES.map((t) => ({ ...t, designJson: t.designJson }));
+
   const filtered = search
     ? templates.filter(
         (t) =>
@@ -384,12 +378,11 @@ function TemplatePicker({
           <div className="px-6 py-4 border-b border-gray-200 shrink-0">
             <DialogTitle>Choose a Template</DialogTitle>
             <DialogDescription>
-              Select a template to pre-fill your email body. You can edit
-              content after selecting.
+              Select a template to pre-fill your email. You can edit content
+              after selecting.
             </DialogDescription>
           </div>
 
-          {/* Tabs */}
           <div className="flex border-b border-gray-200 px-6 shrink-0">
             {[
               {
@@ -411,7 +404,6 @@ function TemplatePicker({
             ))}
           </div>
 
-          {/* Search */}
           <div className="px-6 py-3 border-b border-gray-100 shrink-0">
             <div className="relative">
               <Sparkles className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
@@ -468,7 +460,7 @@ function TemplatePicker({
                         {template.name}
                       </span>
                       <div className="flex items-center gap-1 shrink-0">
-                        {"designJson" in template && template.designJson && (
+                        {template.designJson && (
                           <span className="inline-flex items-center gap-0.5 bg-blue-50 border border-blue-200 text-blue-600 text-[9px] font-semibold px-1.5 py-0.5 rounded-full">
                             <Wand2 className="h-2 w-2" /> Visual
                           </span>
@@ -505,7 +497,7 @@ function TemplatePicker({
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Visual Body Preview (inline, read-only, shown when template body is visual HTML)
+// Visual Body Preview (read-only scaled iframe of visual template)
 // ─────────────────────────────────────────────────────────────────────────────
 
 function VisualBodyPreview({
@@ -517,16 +509,13 @@ function VisualBodyPreview({
 }) {
   return (
     <div className="border border-blue-200 rounded-xl overflow-hidden">
-      {/* Header bar */}
       <div className="flex items-center justify-between px-3 py-2 bg-blue-50 border-b border-blue-200">
         <div className="flex items-center gap-2">
           <Wand2 className="h-3.5 w-3.5 text-blue-600" />
           <span className="text-xs font-semibold text-blue-700">
             Visual template loaded
           </span>
-          <span className="text-xs text-blue-500">
-            — full HTML email. Use "Use Template" to change.
-          </span>
+          <span className="text-xs text-blue-500">— full HTML email</span>
         </div>
         <button
           onClick={onClear}
@@ -535,7 +524,6 @@ function VisualBodyPreview({
           <X className="h-3 w-3" /> Clear
         </button>
       </div>
-      {/* Scaled preview */}
       <div
         className="relative overflow-hidden bg-gray-50"
         style={{ height: 280 }}
@@ -607,24 +595,20 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
   const [success, setSuccess] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [showPreview, setShowPreview] = useState(false);
-  const [bodyIsVisual, setBodyIsVisual] = useState(false); // true when body is full visual HTML
 
-  // Body editor mode
-  const [editorMode, setEditorMode] = useState<"text" | "visual-preview">(
-    "text",
-  );
-  // "text" = Tiptap, "visual-preview" = loaded visual template (read-only inline iframe + can switch back)
+  // When a visual template is loaded:
+  //   bodyIsVisual = true  → show VisualBodyPreview (iframe read-only)
+  //   bodyIsVisual = false → show RichTextEditor
+  const [bodyIsVisual, setBodyIsVisual] = useState(false);
 
   const selectedList = contactLists.find((l) => l.id === selectedListId);
   const selectedSender = filteredSenders.find((s) => s.id === selectedSenderId);
 
-  // Pre-select list from URL param
   useEffect(() => {
     const preselectedListId = searchParams.get("listId");
     if (preselectedListId) setSelectedListId(preselectedListId);
   }, [searchParams]);
 
-  // Filter senders by domain of selected list
   useEffect(() => {
     if (selectedList) {
       const sendersForDomain = senders.filter(
@@ -647,8 +631,6 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
 
   const getRecipientCount = (list: ContactList) =>
     list._count?.contacts ?? list.emails.length;
-
-  // ── Submit (unchanged logic) ─────────────────────────────────────────────
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -687,7 +669,6 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
       setSelectedListId("");
       setSelectedSenderId("");
       setBodyIsVisual(false);
-      setEditorMode("text");
       setTimeout(() => router.push("/email-history"), 2000);
     } catch (err) {
       setError(err instanceof Error ? err.message : "An error occurred");
@@ -697,24 +678,26 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
   };
 
   // ── Template select ──────────────────────────────────────────────────────
-
   const handleTemplateSelect = (t: {
     name?: string;
     subject?: string;
     body: string;
+    designJson?: string | null;
     isVisual: boolean;
   }) => {
     if (t.subject) setSubject(t.subject);
     setBody(t.body);
     setBodyIsVisual(t.isVisual);
-    setEditorMode(t.isVisual ? "visual-preview" : "text");
   };
 
-  // ── Variable insert into subject or body ─────────────────────────────────
+  // ── Clear visual template & switch to manual ─────────────────────────────
+  const handleWriteManually = () => {
+    setBody("");
+    setBodyIsVisual(false);
+  };
 
-  const insertVariableIntoSubject = (token: string) => {
+  const insertVariableIntoSubject = (token: string) =>
     setSubject((prev) => prev + token);
-  };
 
   const canSend = subject && body && selectedListId && selectedSenderId;
 
@@ -879,7 +862,7 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
                   <div className="flex items-center justify-between flex-wrap gap-2">
                     <Label>Email Content *</Label>
 
-                    {/* Editor mode toggle */}
+                    {/* When a visual template is loaded, show badge + "Write Manually" escape */}
                     {bodyIsVisual && (
                       <div className="flex items-center gap-2">
                         <span className="inline-flex items-center gap-1 text-xs text-blue-600 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full font-medium">
@@ -887,14 +870,10 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
                         </span>
                         <button
                           type="button"
-                          onClick={() => {
-                            setBody("");
-                            setBodyIsVisual(false);
-                            setEditorMode("text");
-                          }}
-                          className="text-xs text-gray-500 hover:text-gray-700 flex items-center gap-1"
+                          onClick={handleWriteManually}
+                          className="text-xs text-gray-500 hover:text-gray-800 flex items-center gap-1 px-2 py-1 rounded border border-gray-200 hover:bg-gray-50 transition-colors"
                         >
-                          <Type className="h-3 w-3" /> Switch to plain text
+                          <PenLine className="h-3 w-3" /> Write manually
                         </button>
                       </div>
                     )}
@@ -905,14 +884,11 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
                     )}
                   </div>
 
-                  {editorMode === "visual-preview" && bodyIsVisual ? (
+                  {/* Body editor area */}
+                  {bodyIsVisual ? (
                     <VisualBodyPreview
                       html={body}
-                      onClear={() => {
-                        setBody("");
-                        setBodyIsVisual(false);
-                        setEditorMode("text");
-                      }}
+                      onClear={handleWriteManually}
                     />
                   ) : (
                     <RichTextEditor
@@ -955,9 +931,8 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
           </Card>
         </div>
 
-        {/* ── Right Sidebar (campaign details) ──────────────────────────── */}
+        {/* ── Right Sidebar ─────────────────────────────────────────────── */}
         <div className="space-y-6">
-          {/* Variables reference */}
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-sm flex items-center gap-2">
@@ -1056,7 +1031,6 @@ export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
         </div>
       </div>
 
-      {/* Preview Modal */}
       <PreviewModal
         open={showPreview}
         onClose={() => setShowPreview(false)}

@@ -74,6 +74,7 @@ export async function verifyDomain(domainId: string) {
     if (!domain || !domain.resendId) {
       return { success: false, error: "Domain not found" };
     }
+
     await resend.domains.verify(domain.resendId);
 
     const { data, error } = await resend.domains.get(domain.resendId);

@@ -1,7 +1,10 @@
+// app/api/templates/[id]/route.ts
 import { type NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/app/_lib/auth/session";
 import prisma from "@/app/_lib/db/prisma";
+import { BUILTIN_TEMPLATES } from "@/app/_lib/email/templates";
 
+// ── GET — fetch a single template (supports builtin IDs too) ──────────────────
 export async function GET(
   request: NextRequest,
   { params }: { params: { id: string } },
@@ -10,6 +13,17 @@ export async function GET(
     const session = await getSession();
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
+    // Check if it's a builtin template
+    const builtin = BUILTIN_TEMPLATES.find((t) => t.id === params.id);
+    if (builtin) {
+      return NextResponse.json({
+        ...builtin,
+        // Ensure designJson is always the string version
+        designJson: builtin.designJson,
+        isBuiltin: true,
+      });
     }
 
     const template = await prisma.emailTemplate.findFirst({
@@ -33,6 +47,7 @@ export async function GET(
   }
 }
 
+// ── PUT — update an existing template ─────────────────────────────────────────
 export async function PUT(
   request: NextRequest,
   { params }: { params: { id: string } },
@@ -44,20 +59,20 @@ export async function PUT(
     }
 
     const body = await request.json();
-    const { name, description, subject, body: templateBody, category } = body;
+    const {
+      name,
+      description,
+      subject,
+      body: emailBody,
+      designJson,
+      category,
+    } = body;
 
-    if (!name?.trim()) {
-      return NextResponse.json(
-        { error: "Template name is required" },
-        { status: 400 },
-      );
-    }
-
-    const existing = await prisma.emailTemplate.findFirst({
+    const template = await prisma.emailTemplate.findFirst({
       where: { id: params.id, userId: session.user.id },
     });
 
-    if (!existing) {
+    if (!template) {
       return NextResponse.json(
         { error: "Template not found" },
         { status: 404 },
@@ -67,11 +82,12 @@ export async function PUT(
     const updated = await prisma.emailTemplate.update({
       where: { id: params.id },
       data: {
-        name: name.trim(),
-        description: description?.trim() || undefined,
-        subject: subject?.trim() || undefined,
-        body: templateBody || existing.body,
-        category: category || existing.category,
+        ...(name !== undefined && { name }),
+        ...(description !== undefined && { description }),
+        ...(subject !== undefined && { subject }),
+        ...(emailBody !== undefined && { body: emailBody }),
+        ...(designJson !== undefined && { designJson }),
+        ...(category !== undefined && { category }),
         updatedAt: new Date(),
       },
     });
@@ -86,6 +102,7 @@ export async function PUT(
   }
 }
 
+// ── DELETE — delete a template ────────────────────────────────────────────────
 export async function DELETE(
   request: NextRequest,
   { params }: { params: { id: string } },
@@ -96,27 +113,20 @@ export async function DELETE(
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const existing = await prisma.emailTemplate.findFirst({
+    const template = await prisma.emailTemplate.findFirst({
       where: { id: params.id, userId: session.user.id },
     });
 
-    if (!existing) {
+    if (!template) {
       return NextResponse.json(
         { error: "Template not found" },
         { status: 404 },
       );
     }
 
-    if (existing.isBuiltIn) {
-      return NextResponse.json(
-        { error: "Cannot delete built-in templates" },
-        { status: 400 },
-      );
-    }
-
     await prisma.emailTemplate.delete({ where: { id: params.id } });
 
-    return NextResponse.json({ success: true, message: "Template deleted" });
+    return NextResponse.json({ success: true });
   } catch (error) {
     console.error("Error deleting template:", error);
     return NextResponse.json(

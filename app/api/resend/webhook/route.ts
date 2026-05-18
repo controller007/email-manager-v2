@@ -59,8 +59,12 @@ export async function POST(req: NextRequest) {
     // ── Email events ───────────────────────────────────────────────────────
     // New sends use tags: email_history_id
     // Legacy sends used broadcastId field (kept for backward compat)
-    const tags: { name: string; value: string }[] = data?.tags || [];
-    const tagHistoryId = tags.find((t) => t.name === "email_history_id")?.value;
+    const tags = data?.tags || {};
+    const tagHistoryId =
+      typeof tags === "object" && !Array.isArray(tags)
+        ? tags["email_history_id"]
+        : undefined;
+
     const legacyBroadcastId = data?.broadcast_id;
 
     const recipientEmail: string = Array.isArray(data?.to)

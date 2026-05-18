@@ -303,13 +303,12 @@ export function CanvasBlock({ block, gs }: CanvasBlockProps) {
                 lineHeight: 1.6,
                 ...baseFont,
               }}
-            >
-              {b.leftContent || (
-                <span style={{ color: "#9ca3af", fontSize: 12 }}>
-                  Left column — drop content here
-                </span>
-              )}
-            </div>
+              dangerouslySetInnerHTML={{
+                __html:
+                  b.leftContent ||
+                  '<span style="color:#9ca3af;font-size:12px;">Left column — drop content here</span>',
+              }}
+            />
             <div
               style={{
                 flex: rf,
@@ -322,13 +321,12 @@ export function CanvasBlock({ block, gs }: CanvasBlockProps) {
                 lineHeight: 1.6,
                 ...baseFont,
               }}
-            >
-              {b.rightContent || (
-                <span style={{ color: "#9ca3af", fontSize: 12 }}>
-                  Right column — drop content here
-                </span>
-              )}
-            </div>
+              dangerouslySetInnerHTML={{
+                __html:
+                  b.rightContent ||
+                  '<span style="color:#9ca3af;font-size:12px;">Right column — drop content here</span>',
+              }}
+            />
           </div>
         </div>
       );
@@ -352,9 +350,11 @@ export function CanvasBlock({ block, gs }: CanvasBlockProps) {
                   borderRadius: 4,
                   ...baseFont,
                 }}
-              >
-                {c || <span style={{ color: "#9ca3af" }}>Column {i + 1}</span>}
-              </div>
+                dangerouslySetInnerHTML={{
+                  __html:
+                    c || `<span style="color:#9ca3af;">Column ${i + 1}</span>`,
+                }}
+              />
             ))}
           </div>
         </div>
@@ -419,7 +419,7 @@ export function CanvasBlock({ block, gs }: CanvasBlockProps) {
             borderLeft: `4px solid ${b.borderColor}`,
           }}
         >
-          <p
+          <div
             style={{
               margin: "0 0 8px",
               fontSize: b.fontSize,
@@ -428,9 +428,8 @@ export function CanvasBlock({ block, gs }: CanvasBlockProps) {
               lineHeight: 1.6,
               ...baseFont,
             }}
-          >
-            {b.content}
-          </p>
+            dangerouslySetInnerHTML={{ __html: b.content }}
+          />
           <p
             style={{
               margin: 0,
@@ -640,7 +639,7 @@ export function CanvasBlock({ block, gs }: CanvasBlockProps) {
           >
             "
           </p>
-          <p
+          <div
             style={{
               margin: "0 0 16px",
               fontSize: 16,
@@ -649,9 +648,8 @@ export function CanvasBlock({ block, gs }: CanvasBlockProps) {
               lineHeight: 1.6,
               ...baseFont,
             }}
-          >
-            {b.quote}
-          </p>
+            dangerouslySetInnerHTML={{ __html: b.quote }}
+          />
           <p
             style={{
               margin: "0 0 2px",

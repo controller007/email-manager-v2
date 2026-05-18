@@ -1,11 +1,12 @@
-// app/api/templates/route.ts — UPDATED
-// Only change: accepts and stores the designJson field from the visual builder.
-// All existing GET/POST logic is preserved exactly.
-
+// app/api/templates/route.ts
 import { type NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/app/_lib/auth/session";
 import prisma from "@/app/_lib/db/prisma";
+import { BUILTIN_TEMPLATES } from "@/app/_lib/email/templates";
+import { buildEmailHtml } from "@/app/_components/email-builder";
+;
 
+// ── GET — list all saved templates for the current user ───────────────────────
 export async function GET(request: NextRequest) {
   try {
     const session = await getSession();
@@ -16,6 +17,17 @@ export async function GET(request: NextRequest) {
     const templates = await prisma.emailTemplate.findMany({
       where: { userId: session.user.id },
       orderBy: { updatedAt: "desc" },
+      select: {
+        id: true,
+        name: true,
+        description: true,
+        subject: true,
+        body: true,
+        designJson: true,
+        category: true,
+        createdAt: true,
+        updatedAt: true,
+      },
     });
 
     return NextResponse.json(templates);
@@ -28,6 +40,9 @@ export async function GET(request: NextRequest) {
   }
 }
 
+// ── POST — create a new template ──────────────────────────────────────────────
+// Also used when "duplicating" a builtin template — caller passes builtinId
+// and we copy the builtin's designJson + body + subject into a new saved template.
 export async function POST(request: NextRequest) {
   try {
     const session = await getSession();
@@ -36,39 +51,73 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    // designJson is new — optional, sent by visual builder
     const {
       name,
       description,
       subject,
-      body: templateBody,
-      category,
+      body: emailBody,
       designJson,
+      category = "custom",
+      // Optional: duplicate a builtin template by its id
+      builtinId,
     } = body;
 
-    if (!name?.trim()) {
-      return NextResponse.json(
-        { error: "Template name is required" },
-        { status: 400 },
-      );
+    let finalBody = emailBody;
+    let finalDesignJson = designJson;
+    let finalSubject = subject;
+    let finalName = name;
+    let finalDescription = description;
+    let finalCategory = category;
+
+    // If duplicating a builtin template, resolve its fields
+    if (builtinId) {
+      const builtin = BUILTIN_TEMPLATES.find((t) => t.id === builtinId);
+      if (!builtin) {
+        return NextResponse.json(
+          { error: "Builtin template not found" },
+          { status: 404 },
+        );
+      }
+      finalName = name || `${builtin.name} (copy)`;
+      finalDescription = description || builtin.description;
+      finalSubject = subject || builtin.subject;
+      finalCategory = category || builtin.category;
+
+      // designJson is already a string in the builtin
+      finalDesignJson = builtin.designJson;
+
+      // Regenerate the HTML body from the designJson blocks so it's always fresh
+      if (finalDesignJson) {
+        try {
+          const parsed = JSON.parse(finalDesignJson);
+          // Lazy import to avoid circular issues — caller can also pass body directly
+          if (parsed.blocks && parsed.globalSettings) {
+        
+            finalBody = buildEmailHtml(parsed.blocks, parsed.globalSettings);
+          }
+        } catch {
+          finalBody = builtin.body;
+        }
+      } else {
+        finalBody = builtin.body;
+      }
     }
-    if (!templateBody?.trim()) {
+
+    if (!finalName || !finalBody) {
       return NextResponse.json(
-        { error: "Template body is required" },
+        { error: "Name and body are required" },
         { status: 400 },
       );
     }
 
     const template = await prisma.emailTemplate.create({
       data: {
-        name: name.trim(),
-        description: description?.trim() || undefined,
-        subject: subject?.trim() || undefined,
-        body: templateBody,
-        // Store visual builder block state — null for plain text templates
-        ...(designJson ? { designJson } : {}),
-        category: category || "custom",
-        isBuiltIn: false,
+        name: finalName,
+        description: finalDescription || null,
+        subject: finalSubject || null,
+        body: finalBody,
+        designJson: finalDesignJson || null,
+        category: finalCategory,
         userId: session.user.id,
       },
     });
