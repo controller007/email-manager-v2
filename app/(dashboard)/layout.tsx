@@ -7,8 +7,6 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <Suspense>
       <DashboardLayout>{children}</DashboardLayout>
-    </Suspense>
   );
 }
