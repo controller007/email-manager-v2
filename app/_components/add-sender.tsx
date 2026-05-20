@@ -1,9 +1,8 @@
+"use client";
 
-"use client"
-
-import { useState } from "react"
-import { useRouter } from "next/navigation"
-import { Plus, Loader } from "lucide-react"
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { Plus, Loader } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -11,54 +10,57 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/app/_components/ui/dialog"
-import { Button } from "@/app/_components/ui/button"
-import { Input } from "@/app/_components/ui/input"
-import { Label } from "@/app/_components/ui/label"
-import { Alert, AlertDescription } from "@/app/_components/ui/alert"
-import { createSender } from "../domains/actions"
+} from "@/app/_components/ui/dialog";
+import { Button } from "@/app/_components/ui/button";
+import { Input } from "@/app/_components/ui/input";
+import { Label } from "@/app/_components/ui/label";
+import { Alert, AlertDescription } from "@/app/_components/ui/alert";
+import { createSender } from "../(dashboard)/domains/actions";
 
 interface AddSenderDialogProps {
-  domainId: string
-  domainName: string
+  domainId: string;
+  domainName: string;
 }
 
-export function AddSenderDialog({ domainId, domainName }: AddSenderDialogProps) {
-  const [open, setOpen] = useState(false)
-  const [name, setName] = useState("")
-  const [username, setUsername] = useState("")
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState("")
-  const [success, setSuccess] = useState("")
-  const router = useRouter()
+export function AddSenderDialog({
+  domainId,
+  domainName,
+}: AddSenderDialogProps) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState("");
+  const [username, setUsername] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError("")
-    setSuccess("")
-    setIsLoading(true)
+    e.preventDefault();
+    setError("");
+    setSuccess("");
+    setIsLoading(true);
 
     try {
-      const result = await createSender(domainId, name.trim(), username.trim())
+      const result = await createSender(domainId, name.trim(), username.trim());
 
       if (!result.success) {
-        setError(result.error || "Failed to create sender")
+        setError(result.error || "Failed to create sender");
       } else {
-        setSuccess(`Sender ${result.sender?.email} created successfully!`)
+        setSuccess(`Sender ${result.sender?.email} created successfully!`);
         setTimeout(() => {
-          setOpen(false)
-          setName("")
-          setUsername("")
-          setSuccess("")
-          router.refresh()
-        }, 1500)
+          setOpen(false);
+          setName("");
+          setUsername("");
+          setSuccess("");
+          router.refresh();
+        }, 1500);
       }
     } catch (err) {
-      setError("An unexpected error occurred")
+      setError("An unexpected error occurred");
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
     }
-  }
+  };
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -126,7 +128,8 @@ export function AddSenderDialog({ domainId, domainName }: AddSenderDialogProps) 
 
           <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
             <p className="text-sm text-blue-800">
-              <strong>Preview:</strong> {name || "Display Name"} &lt;{username || "username"}@{domainName}&gt;
+              <strong>Preview:</strong> {name || "Display Name"} &lt;
+              {username || "username"}@{domainName}&gt;
             </p>
           </div>
 
@@ -153,5 +156,5 @@ export function AddSenderDialog({ domainId, domainName }: AddSenderDialogProps) 
         </form>
       </DialogContent>
     </Dialog>
-  )
+  );
 }

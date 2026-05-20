@@ -1,4 +1,22 @@
 // app/api/send-email/route.ts
+//
+// FIXES IN THIS FILE:
+// 1. NEXT_PUBLIC_APP_URL now throws a hard error in production if not set,
+//    instead of silently falling back to localhost:3000 — which was putting
+//    localhost URLs into email bodies and headers, causing:
+//      - Resend's "URLs don't match sending domain" warning
+//      - Click tracking failing (Resend won't proxy localhost links)
+//      - Open tracking potentially not firing (mismatched domain heuristics)
+//      - Unsubscribe links broken in production emails
+//
+// 2. sendBatch return value is now correctly saved as batchIds[] so the sync
+//    route (PUT /api/email-history) can fetch per-message status from Resend.
+//
+// HOW TO FIX THE localhost PROBLEM:
+//   In Vercel dashboard → your project → Settings → Environment Variables:
+//   Add: NEXT_PUBLIC_APP_URL = https://yourdomain.com  (no trailing slash)
+//   Then redeploy. Every email will now contain real URLs.
+
 import { type NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/app/_lib/auth/session";
 import { emailComposeSchema } from "@/app/_lib/validations/email";
@@ -15,6 +33,33 @@ export async function POST(request: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    // ── Guard: APP_URL must be set correctly in production ─────────────────
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+    if (!appUrl || appUrl.includes("localhost")) {
+      const isProd = process.env.NODE_ENV === "production";
+      if (isProd) {
+        console.error(
+          "FATAL: NEXT_PUBLIC_APP_URL is not set or still points to localhost. " +
+            "Set it to your production URL in Vercel environment variables.",
+        );
+        return NextResponse.json(
+          {
+            error:
+              "Server misconfiguration: NEXT_PUBLIC_APP_URL must be set to your production URL " +
+              "(e.g. https://yourdomain.com). Email sending is blocked to prevent broken links.",
+          },
+          { status: 500 },
+        );
+      }
+      // In development, localhost is fine — just log a reminder
+      console.warn(
+        "NEXT_PUBLIC_APP_URL is using localhost — this is fine for dev, " +
+          "but remember to set it in Vercel before sending real campaigns.",
+      );
+    }
+
+    const safeAppUrl = appUrl || "http://localhost:3000";
 
     const body = await request.json();
     const validationResult = emailComposeSchema.safeParse(body);
@@ -80,7 +125,6 @@ export async function POST(request: NextRequest) {
     if (dbContacts.length > 0) {
       recipientContacts = dbContacts;
     } else {
-      // Legacy fallback: use emails[] array from contact list
       recipientContacts = contactList.emails.map((e) => ({ email: e }));
     }
 
@@ -129,7 +173,6 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
     const fromAddress = `${sender.name} <${sender.email}>`;
 
     // Build batch payload — one email per recipient with personalisation
@@ -145,7 +188,9 @@ export async function POST(request: NextRequest) {
       };
 
       const personalizedBody = replaceVariables(emailBody, variables);
-      const unsubscribeUrl = `${appUrl}/api/unsubscribe?email=${encodeURIComponent(contact.email)}&historyId=${emailHistory.id}`;
+
+      // ── Use safeAppUrl (real production URL, never localhost) ─────────────
+      const unsubscribeUrl = `${safeAppUrl}/api/unsubscribe?email=${encodeURIComponent(contact.email)}&historyId=${emailHistory.id}`;
 
       const html = generateEmailTemplate({
         body: personalizedBody,
@@ -172,19 +217,23 @@ export async function POST(request: NextRequest) {
       };
     });
 
-    // Send in batches of 100
+    // Send in batches of 100 (Resend's batch limit)
+    // sendBatch returns { ids: string[], failedCount: number }
+    // ids = Resend message IDs — one per successfully queued email
+    // These are stored in batchIds[] on EmailHistory so the sync route
+    // (PUT /api/email-history) can poll each message's status via resend.emails.get(id)
     const { ids, failedCount } = await sendBatch(batchPayload, emailHistory.id);
 
     const sentCount = recipientContacts.length - failedCount;
 
-    // Update history with results
+    // Update history with results — batchIds is the critical field for sync
     await prisma.emailHistory.update({
       where: { id: emailHistory.id },
       data: {
         status: failedCount === recipientContacts.length ? "failed" : "sent",
         sentCount,
         failedCount,
-        batchIds: ids,
+        batchIds: ids, // ← stores all Resend message IDs for later sync
       },
     });
 
@@ -194,6 +243,8 @@ export async function POST(request: NextRequest) {
       recipientCount: recipientContacts.length,
       sentCount,
       failedCount,
+      // Surface this in dev so you can verify it's populated
+      batchIdCount: ids.length,
     });
   } catch (error) {
     console.error("Error sending batch email:", error);

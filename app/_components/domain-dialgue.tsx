@@ -1,8 +1,8 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { useRouter } from "next/navigation"
-import { Plus, Loader } from "lucide-react"
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { Plus, Loader } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -10,59 +10,62 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/app/_components/ui/dialog"
-import { Button } from "@/app/_components/ui/button"
-import { Input } from "@/app/_components/ui/input"
-import { Label } from "@/app/_components/ui/label"
-import { Alert, AlertDescription } from "@/app/_components/ui/alert"
-import { createDomain } from "../domains/actions"
-import { DnsRecordsDisplay } from "./dns-record-display"
+} from "@/app/_components/ui/dialog";
+import { Button } from "@/app/_components/ui/button";
+import { Input } from "@/app/_components/ui/input";
+import { Label } from "@/app/_components/ui/label";
+import { Alert, AlertDescription } from "@/app/_components/ui/alert";
+import { createDomain } from "../(dashboard)/domains/actions";
+import { DnsRecordsDisplay } from "./dns-record-display";
 
 export function AddDomainDialog() {
-  const [open, setOpen] = useState(false)
-  const [domain, setDomain] = useState("")
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState("")
-  const [dnsRecords, setDnsRecords] = useState<any[]>([])
-  const [domainId, setDomainId] = useState("")
-  const router = useRouter()
+  const [open, setOpen] = useState(false);
+  const [domain, setDomain] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [dnsRecords, setDnsRecords] = useState<any[]>([]);
+  const [domainId, setDomainId] = useState("");
+  const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError("")
-    setIsLoading(true)
+    e.preventDefault();
+    setError("");
+    setIsLoading(true);
 
     try {
       // Clean domain input
-      const cleanDomain = domain.trim().toLowerCase().replace(/^https?:\/\//, "")
+      const cleanDomain = domain
+        .trim()
+        .toLowerCase()
+        .replace(/^https?:\/\//, "");
 
-      const result = await createDomain(cleanDomain)
+      const result = await createDomain(cleanDomain);
 
       if (!result.success) {
-        setError(result.error || "Failed to add domain")
-        setIsLoading(false)
-        return
+        setError(result.error || "Failed to add domain");
+        setIsLoading(false);
+        return;
       }
 
       // Show DNS records
-      setDnsRecords(result.domain?.records || [])
-      setDomainId(result.domain?.id || "")
-      
-      router.refresh()
+      setDnsRecords(result.domain?.records || []);
+      setDomainId(result.domain?.id || "");
+
+      router.refresh();
     } catch (err) {
-      setError("An unexpected error occurred")
+      setError("An unexpected error occurred");
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
     }
-  }
+  };
 
   const handleClose = () => {
-    setOpen(false)
-    setDomain("")
-    setError("")
-    setDnsRecords([])
-    setDomainId("")
-  }
+    setOpen(false);
+    setDomain("");
+    setError("");
+    setDnsRecords([]);
+    setDomainId("");
+  };
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -129,8 +132,8 @@ export function AddDomainDialog() {
             </div>
           </form>
         ) : (
-          <DnsRecordsDisplay 
-            records={dnsRecords} 
+          <DnsRecordsDisplay
+            records={dnsRecords}
             domain={domain}
             domainId={domainId}
             onClose={handleClose}
@@ -138,5 +141,5 @@ export function AddDomainDialog() {
         )}
       </DialogContent>
     </Dialog>
-  )
+  );
 }

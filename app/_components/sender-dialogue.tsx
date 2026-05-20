@@ -1,8 +1,8 @@
-"use client"
+"use client";
 
-import { useState } from "react"
-import { useRouter } from "next/navigation"
-import { Edit, Loader } from "lucide-react"
+import { useState } from "react";
+import { useRouter } from "next/navigation";
+import { Edit, Loader } from "lucide-react";
 import {
   Dialog,
   DialogContent,
@@ -10,56 +10,59 @@ import {
   DialogHeader,
   DialogTitle,
   DialogTrigger,
-} from "@/app/_components/ui/dialog"
-import { Button } from "@/app/_components/ui/button"
-import { Input } from "@/app/_components/ui/input"
-import { Label } from "@/app/_components/ui/label"
-import { Alert, AlertDescription } from "@/app/_components/ui/alert"
-import { updateSender } from "../domains/actions"
+} from "@/app/_components/ui/dialog";
+import { Button } from "@/app/_components/ui/button";
+import { Input } from "@/app/_components/ui/input";
+import { Label } from "@/app/_components/ui/label";
+import { Alert, AlertDescription } from "@/app/_components/ui/alert";
+import { updateSender } from "../(dashboard)/domains/actions";
 
 interface EditSenderDialogProps {
   sender: {
-    id: string
-    name: string
-    email: string
-  }
-  domainName: string
+    id: string;
+    name: string;
+    email: string;
+  };
+  domainName: string;
 }
 
-export function EditSenderDialog({ sender, domainName }: EditSenderDialogProps) {
-  const [open, setOpen] = useState(false)
-  const [name, setName] = useState(sender.name)
-  const [username, setUsername] = useState(sender.email.split("@")[0])
-  const [isLoading, setIsLoading] = useState(false)
-  const [error, setError] = useState("")
-  const [success, setSuccess] = useState("")
-  const router = useRouter()
+export function EditSenderDialog({
+  sender,
+  domainName,
+}: EditSenderDialogProps) {
+  const [open, setOpen] = useState(false);
+  const [name, setName] = useState(sender.name);
+  const [username, setUsername] = useState(sender.email.split("@")[0]);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
+  const router = useRouter();
 
   const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    setError("")
-    setSuccess("")
-    setIsLoading(true)
+    e.preventDefault();
+    setError("");
+    setSuccess("");
+    setIsLoading(true);
 
     try {
-      const result = await updateSender(sender.id, name, username, domainName)
+      const result = await updateSender(sender.id, name, username, domainName);
 
       if (!result.success) {
-        setError(result.error || "Failed to update sender")
+        setError(result.error || "Failed to update sender");
       } else {
-        setSuccess("Sender updated successfully!")
+        setSuccess("Sender updated successfully!");
         setTimeout(() => {
-          setOpen(false)
-          setSuccess("")
-          router.refresh()
-        }, 1500)
+          setOpen(false);
+          setSuccess("");
+          router.refresh();
+        }, 1500);
       }
     } catch (err) {
-      setError("An unexpected error occurred")
+      setError("An unexpected error occurred");
     } finally {
-      setIsLoading(false)
+      setIsLoading(false);
     }
-  }
+  };
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -120,7 +123,8 @@ export function EditSenderDialog({ sender, domainName }: EditSenderDialogProps) 
 
           <div className="p-3 bg-blue-50 border border-blue-200 rounded-lg">
             <p className="text-sm text-blue-800">
-              <strong>Preview:</strong> {name || "Display Name"} &lt;{username || "username"}@{domainName}&gt;
+              <strong>Preview:</strong> {name || "Display Name"} &lt;
+              {username || "username"}@{domainName}&gt;
             </p>
           </div>
 
@@ -147,5 +151,5 @@ export function EditSenderDialog({ sender, domainName }: EditSenderDialogProps) 
         </form>
       </DialogContent>
     </Dialog>
-  )
+  );
 }

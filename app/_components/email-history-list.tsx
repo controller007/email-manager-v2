@@ -1,12 +1,5 @@
 "use client";
 
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/app/_components/ui/card";
-import { Button } from "@/app/_components/ui/button";
 import { Checkbox } from "@/app/_components/ui/checkbox";
 import {
   Dialog,
@@ -21,38 +14,36 @@ import {
   TabsList,
   TabsTrigger,
 } from "@/app/_components/ui/tabs";
+import { Button } from "@/app/_components/ui/button";
+import { Badge } from "@/app/_components/ui/badge";
 import {
   Mail,
   Users,
   CheckCircle,
   AlertCircle,
-  Clock,
   ChevronLeft,
   ChevronRight,
-  Calendar,
-  BarChart3,
-  Trash2,
-  Trash,
-  Globe,
   Send,
   Eye,
   XCircle,
-  MousePointer,
+  MousePointerClick,
   Smartphone,
   Monitor,
-  X,
-  UserMinus,
+  Trash2,
+  Trash,
+  BarChart3,
+  Calendar,
+  Globe,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { useEffect, useState, useTransition } from "react";
+import { useState, useTransition } from "react";
 import {
   deleteEmailHistory,
   deleteManyEmailHistories,
   clearAllEmailHistories,
-} from "@/app/email-history/actions";
+} from "@/app/(dashboard)/email-history/actions";
 import { toast } from "sonner";
-import { Badge } from "@/app/_components/ui/badge";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -82,9 +73,43 @@ interface EmailHistoryItem {
 
 interface EmailHistoryListProps {
   emailHistory: EmailHistoryItem[];
-  totalCount: number;
+  total: number;
   currentPage: number;
   totalPages: number;
+}
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+function buildEmailPreviewHtml(body: string, senderName: string) {
+  if (body.trim().startsWith("<!DOCTYPE") || body.trim().startsWith("<html"))
+    return body;
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><style>*{box-sizing:border-box;margin:0;padding:0}body{background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}.wrapper{padding:24px 16px}.container{max-width:600px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 8px rgba(0,0,0,.1)}.body-content{padding:36px 44px;color:#374151;font-size:15px;line-height:1.7}.body-content h1{font-size:26px;font-weight:700;margin-bottom:14px;color:#111827}.body-content h2{font-size:20px;font-weight:600;margin-bottom:12px;color:#111827}.body-content p{margin-bottom:14px}.body-content ul,.body-content ol{margin-bottom:14px;padding-left:22px}.body-content li{margin-bottom:5px}.body-content a{color:#2563eb}.body-content strong{font-weight:700}.body-content img{max-width:100%;border-radius:6px}.footer{padding:18px 44px;border-top:1px solid #e5e7eb;text-align:center}.footer p{font-size:12px;color:#9ca3af}.footer a{color:#6b7280;text-decoration:underline}</style></head><body><div class="wrapper"><div class="container"><div class="body-content">${body}</div><div class="footer"><p>Sent by <strong>${senderName}</strong> · <a href="#">Unsubscribe</a></p></div></div></div></body></html>`;
+}
+
+function getStatusStyle(email: EmailHistoryItem) {
+  if (email.failedCount > 0 && email.deliveredCount === 0)
+    return {
+      label: "Failed",
+      cls: "bg-red-100 text-red-700 border-red-200 border",
+      Icon: XCircle,
+    };
+  if (email.deliveredCount > 0 && email.failedCount > 0)
+    return {
+      label: "Partial",
+      cls: "bg-yellow-100 text-yellow-700 border-yellow-200 border",
+      Icon: AlertCircle,
+    };
+  if (email.deliveredCount > 0)
+    return {
+      label: "Delivered",
+      cls: "bg-emerald-100 text-emerald-700 border-emerald-200 border",
+      Icon: CheckCircle,
+    };
+  return {
+    label: "Sent",
+    cls: "bg-blue-100 text-blue-700 border-blue-200 border",
+    Icon: Send,
+  };
 }
 
 // ── Detail Dialog ─────────────────────────────────────────────────────────────
@@ -100,116 +125,137 @@ function EmailDetailDialog({
 }) {
   const [viewMode, setViewMode] = useState<"desktop" | "mobile">("desktop");
 
+  const sentCount = email.sentCount || 0;
+  const deliveredCount = email.deliveredCount || 0;
+  const openedCount = email.openedCount || 0;
+  const clickedCount = email.clickedCount || 0;
+  const failedCount = email.failedCount || 0;
+  const bouncedCount = email.bouncedCount || 0;
+  const complainedCount = email.complainedCount || 0;
+  const unsubscribedCount = email.unsubscribedCount || 0;
+
   const deliveryRate =
-    email.sentCount > 0
-      ? Math.round((email.deliveredCount / email.sentCount) * 100)
-      : 0;
+    sentCount > 0 ? Math.round((deliveredCount / sentCount) * 100) : 0;
   const openRate =
-    email.deliveredCount > 0
-      ? Math.round((email.openedCount / email.deliveredCount) * 100)
-      : 0;
+    deliveredCount > 0 ? Math.round((openedCount / deliveredCount) * 100) : 0;
   const clickRate =
-    email.deliveredCount > 0
-      ? Math.round((email.clickedCount / email.deliveredCount) * 100)
-      : 0;
+    deliveredCount > 0 ? Math.round((clickedCount / deliveredCount) * 100) : 0;
+  const bounceRate =
+    sentCount > 0 ? Math.round((bouncedCount / sentCount) * 100) : 0;
+  const complaintRate =
+    sentCount > 0 ? ((complainedCount / sentCount) * 100).toFixed(3) : "0.000";
 
   return (
     <Dialog open={open} onOpenChange={onClose}>
-      <DialogContent className="sm:max-w-[760px] max-h-[88vh] overflow-y-auto p-0 gap-0">
+      <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto p-0 gap-0">
         {/* Header */}
-        <div className="px-6 py-4 border-b border-gray-200 bg-gray-50 rounded-t-xl">
+        <div className="px-6 py-4 border-b border-gray-100 bg-gradient-to-r from-slate-50 to-white rounded-t-xl">
           <DialogTitle className="text-base font-semibold text-gray-900 pr-8 truncate">
             {email.subject}
           </DialogTitle>
           <DialogDescription className="text-xs text-gray-500 mt-0.5">
-            Campaign sent{" "}
+            Sent{" "}
             {new Date(email.createdAt).toLocaleDateString("en-US", {
-              year: "numeric",
-              month: "short",
+              month: "long",
               day: "numeric",
+              year: "numeric",
               hour: "2-digit",
               minute: "2-digit",
-            })}
+            })}{" "}
+            · {sentCount.toLocaleString()} recipients
           </DialogDescription>
         </div>
 
         <div className="p-6">
           <Tabs defaultValue="overview">
-            <TabsList className="grid w-full grid-cols-3 mb-6">
-              <TabsTrigger value="overview">Overview</TabsTrigger>
-              <TabsTrigger value="preview">Preview</TabsTrigger>
-              <TabsTrigger value="analytics">Analytics</TabsTrigger>
+            <TabsList className="grid w-full grid-cols-3 bg-gray-100 rounded-xl mb-6">
+              <TabsTrigger
+                value="overview"
+                className="rounded-lg text-xs font-medium"
+              >
+                Overview
+              </TabsTrigger>
+              <TabsTrigger
+                value="preview"
+                className="rounded-lg text-xs font-medium"
+              >
+                Preview
+              </TabsTrigger>
+              <TabsTrigger
+                value="analytics"
+                className="rounded-lg text-xs font-medium"
+              >
+                Analytics
+              </TabsTrigger>
             </TabsList>
 
-            {/* Overview tab */}
+            {/* ── Overview ──────────────────────────────────────────────── */}
             <TabsContent value="overview" className="space-y-5">
               {/* Meta */}
-              <div className="grid grid-cols-2 gap-3 text-sm">
-                <div className="p-3 bg-gray-50 rounded-lg">
-                  <p className="text-xs text-gray-500 mb-0.5">Contact List</p>
-                  <p className="font-medium text-gray-900">
-                    {email.contactList.name}
-                  </p>
-                </div>
-                <div className="p-3 bg-gray-50 rounded-lg">
-                  <p className="text-xs text-gray-500 mb-0.5">Domain</p>
-                  <p className="font-medium text-gray-900">
-                    {email.contactList.domain.domain}
-                  </p>
-                </div>
-                {email.senderName && (
-                  <div className="p-3 bg-gray-50 rounded-lg">
-                    <p className="text-xs text-gray-500 mb-0.5">Sender</p>
-                    <p className="font-medium text-gray-900">
-                      {email.senderName}
+              <div className="grid grid-cols-2 gap-2 text-sm">
+                {[
+                  { label: "Contact List", value: email.contactList.name },
+                  { label: "Domain", value: email.contactList.domain.domain },
+                  ...(email.senderName
+                    ? [
+                        {
+                          label: "Sender",
+                          value: `${email.senderName} <${email.senderEmail}>`,
+                        },
+                      ]
+                    : []),
+                  {
+                    label: "Campaigns",
+                    value: `${email.contactList._count.emailHistory} total from this list`,
+                  },
+                ].map(({ label, value }) => (
+                  <div key={label} className="p-3 bg-gray-50 rounded-xl">
+                    <p className="text-[10px] text-gray-400 font-medium uppercase tracking-wider mb-0.5">
+                      {label}
                     </p>
-                    <p className="text-xs text-gray-500">{email.senderEmail}</p>
+                    <p className="text-sm font-medium text-gray-900 truncate">
+                      {value}
+                    </p>
                   </div>
-                )}
-                <div className="p-3 bg-gray-50 rounded-lg">
-                  <p className="text-xs text-gray-500 mb-0.5">Method</p>
-                  <p className="font-medium text-gray-900 capitalize">
-                    {email.status || "Sent"}
-                  </p>
-                </div>
+                ))}
               </div>
 
-              {/* Metrics grid */}
+              {/* Count grid */}
               <div className="grid grid-cols-3 md:grid-cols-6 gap-2">
                 {[
                   {
                     label: "Sent",
-                    value: email.sentCount,
+                    value: sentCount,
                     bg: "bg-blue-50",
                     text: "text-blue-700",
                   },
                   {
                     label: "Delivered",
-                    value: email.deliveredCount,
-                    bg: "bg-green-50",
-                    text: "text-green-700",
+                    value: deliveredCount,
+                    bg: "bg-emerald-50",
+                    text: "text-emerald-700",
                   },
                   {
                     label: "Opened",
-                    value: email.openedCount,
+                    value: openedCount,
                     bg: "bg-purple-50",
                     text: "text-purple-700",
                   },
                   {
                     label: "Clicked",
-                    value: email.clickedCount,
+                    value: clickedCount,
                     bg: "bg-indigo-50",
                     text: "text-indigo-700",
                   },
                   {
                     label: "Failed",
-                    value: email.failedCount,
+                    value: failedCount,
                     bg: "bg-red-50",
                     text: "text-red-700",
                   },
                   {
                     label: "Bounced",
-                    value: email.bouncedCount,
+                    value: bouncedCount,
                     bg: "bg-orange-50",
                     text: "text-orange-700",
                   },
@@ -218,188 +264,173 @@ function EmailDetailDialog({
                     key={m.label}
                     className={`${m.bg} rounded-xl p-3 text-center`}
                   >
-                    <p className={`text-xl font-bold ${m.text}`}>{m.value}</p>
-                    <p className={`text-xs ${m.text} mt-0.5 font-medium`}>
+                    <p className={`text-xl font-bold ${m.text}`}>
+                      {m.value.toLocaleString()}
+                    </p>
+                    <p
+                      className={`text-[10px] ${m.text} mt-0.5 font-semibold uppercase tracking-wide`}
+                    >
                       {m.label}
                     </p>
                   </div>
                 ))}
               </div>
 
-              {/* Rates */}
-              {email.sentCount > 0 && (
-                <div className="grid grid-cols-3 gap-3">
+              {/* Rate chips */}
+              {sentCount > 0 && (
+                <div className="grid grid-cols-3 gap-2">
                   {[
                     {
                       label: "Delivery Rate",
                       value: `${deliveryRate}%`,
-                      color: "text-green-700",
+                      good: deliveryRate > 95,
                     },
                     {
                       label: "Open Rate",
                       value: `${openRate}%`,
-                      color: "text-purple-700",
+                      good: openRate > 20,
                     },
                     {
                       label: "Click Rate",
                       value: `${clickRate}%`,
-                      color: "text-indigo-700",
+                      good: clickRate > 2,
                     },
                   ].map((r) => (
                     <div
                       key={r.label}
-                      className="text-center p-3 border border-gray-200 rounded-xl"
+                      className="text-center p-3 border border-gray-100 rounded-xl bg-white"
                     >
-                      <p className={`text-2xl font-bold ${r.color}`}>
+                      <p
+                        className={`text-2xl font-bold ${r.good ? "text-emerald-600" : "text-amber-600"}`}
+                      >
                         {r.value}
                       </p>
-                      <p className="text-xs text-gray-500 mt-0.5">{r.label}</p>
+                      <p className="text-[10px] text-gray-400 font-medium mt-0.5">
+                        {r.label}
+                      </p>
                     </div>
                   ))}
                 </div>
               )}
             </TabsContent>
 
-            {/* Preview tab */}
+            {/* ── Preview ───────────────────────────────────────────────── */}
             <TabsContent value="preview" className="space-y-3">
-              {/* Mobile/desktop toggle */}
               <div className="flex items-center justify-between">
-                <p className="text-xs text-gray-500">
-                  Inbox preview of the sent email
-                </p>
+                <p className="text-xs text-gray-500">Inbox preview</p>
                 <div className="flex bg-gray-100 rounded-lg p-0.5 gap-0.5">
-                  <button
-                    onClick={() => setViewMode("desktop")}
-                    className={`flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                      viewMode === "desktop"
-                        ? "bg-white shadow-sm text-gray-900"
-                        : "text-gray-500"
-                    }`}
-                  >
-                    <Monitor className="h-3 w-3" />
-                    Desktop
-                  </button>
-                  <button
-                    onClick={() => setViewMode("mobile")}
-                    className={`flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${
-                      viewMode === "mobile"
-                        ? "bg-white shadow-sm text-gray-900"
-                        : "text-gray-500"
-                    }`}
-                  >
-                    <Smartphone className="h-3 w-3" />
-                    Mobile
-                  </button>
+                  {(["desktop", "mobile"] as const).map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setViewMode(m)}
+                      className={`flex items-center gap-1 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${viewMode === m ? "bg-white shadow-sm text-gray-900" : "text-gray-500"}`}
+                    >
+                      {m === "desktop" ? (
+                        <Monitor className="h-3 w-3" />
+                      ) : (
+                        <Smartphone className="h-3 w-3" />
+                      )}
+                      {m.charAt(0).toUpperCase() + m.slice(1)}
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              {/* Inbox chrome */}
               <div className="border border-gray-200 rounded-xl overflow-hidden bg-gray-50">
-                <div className="px-4 py-3 bg-white border-b border-gray-200">
-                  <div className="flex items-start gap-3">
-                    <div className="w-8 h-8 rounded-full bg-blue-600 flex items-center justify-center text-white text-xs font-bold shrink-0">
-                      {(email.senderName || "S").charAt(0).toUpperCase()}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-semibold text-gray-900">
-                        {email.senderName || "Sender"}
+                <div className="px-4 py-3 bg-white border-b border-gray-100 flex items-start gap-3">
+                  <div className="h-8 w-8 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center text-white text-xs font-bold shrink-0">
+                    {(email.senderName || "S").charAt(0).toUpperCase()}
+                  </div>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-gray-900">
+                      {email.senderName || "Sender"}
+                    </p>
+                    <p className="text-xs text-gray-700 truncate font-medium mt-0.5">
+                      {email.subject}
+                    </p>
+                    {email.preheader && (
+                      <p className="text-xs text-gray-400 truncate">
+                        {email.preheader}
                       </p>
-                      <p className="text-xs font-medium text-gray-700 mt-0.5 truncate">
-                        {email.subject}
-                      </p>
-                      {email.preheader && (
-                        <p className="text-xs text-gray-400 truncate">
-                          {email.preheader}
-                        </p>
-                      )}
-                    </div>
+                    )}
                   </div>
                 </div>
-
-                <div className="p-3 overflow-auto">
+                <div className="p-3 overflow-auto max-h-64">
                   <div
-                    className={`mx-auto bg-white rounded-lg overflow-hidden shadow-sm transition-all ${
-                      viewMode === "mobile" ? "max-w-xs" : "max-w-full"
-                    }`}
+                    className={`mx-auto bg-white rounded-lg overflow-hidden shadow-sm ${viewMode === "mobile" ? "max-w-[320px]" : "max-w-full"}`}
                   >
-                    <div
-                      className="prose prose-sm max-w-none p-5"
-                      dangerouslySetInnerHTML={{ __html: email.body }}
+                    <iframe
+                      srcDoc={buildEmailPreviewHtml(
+                        email.body,
+                        email.senderName || "Sender",
+                      )}
+                      title="Email preview"
+                      className="w-full border-0 block"
+                      style={{ height: 420 }}
+                      sandbox="allow-same-origin"
                     />
-                    <div className="border-t border-gray-100 px-5 py-3 text-center">
-                      <p className="text-xs text-gray-400">
-                        You're receiving this email because you subscribed.{" "}
-                        <span className="underline">Unsubscribe</span>
-                      </p>
-                    </div>
                   </div>
                 </div>
               </div>
             </TabsContent>
 
-            {/* Analytics tab */}
-            <TabsContent value="analytics" className="space-y-5">
-              <div className="space-y-3">
-                {[
-                  {
-                    label: "Delivery Rate",
-                    value: `${deliveryRate}%`,
-                    detail: `${email.deliveredCount} of ${email.sentCount} delivered`,
-                    good: deliveryRate > 95,
-                  },
-                  {
-                    label: "Open Rate",
-                    value: `${openRate}%`,
-                    detail: `${email.openedCount} opens`,
-                    good: openRate > 20,
-                  },
-                  {
-                    label: "Click Rate",
-                    value: `${clickRate}%`,
-                    detail: `${email.clickedCount} clicks`,
-                    good: clickRate > 2,
-                  },
-                  {
-                    label: "Complaint Rate",
-                    value:
-                      email.sentCount > 0
-                        ? `${(((email.complainedCount || 0) / email.sentCount) * 100).toFixed(3)}%`
-                        : "—",
-                    detail: `${email.complainedCount || 0} spam complaints`,
-                    good: (email.complainedCount || 0) === 0,
-                  },
-                  {
-                    label: "Unsubscribes",
-                    value: String(email.unsubscribedCount || 0),
-                    detail: "removed from list",
-                    good: (email.unsubscribedCount || 0) === 0,
-                  },
-                ].map((item) => (
-                  <div
-                    key={item.label}
-                    className="flex items-center justify-between p-3 border border-gray-100 rounded-xl"
-                  >
-                    <div>
-                      <p className="text-sm font-medium text-gray-900">
-                        {item.label}
-                      </p>
-                      <p className="text-xs text-gray-400">{item.detail}</p>
-                    </div>
-                    <span
-                      className={`text-lg font-bold ${
-                        item.good ? "text-green-600" : "text-amber-600"
-                      }`}
-                    >
-                      {item.value}
-                    </span>
+            {/* ── Analytics ─────────────────────────────────────────────── */}
+            <TabsContent value="analytics" className="space-y-3">
+              {[
+                {
+                  label: "Delivery Rate",
+                  value: `${deliveryRate}%`,
+                  detail: `${deliveredCount.toLocaleString()} of ${sentCount.toLocaleString()} delivered`,
+                  good: deliveryRate > 95,
+                },
+                {
+                  label: "Open Rate",
+                  value: `${openRate}%`,
+                  detail: `${openedCount.toLocaleString()} opens`,
+                  good: openRate > 20,
+                },
+                {
+                  label: "Click Rate",
+                  value: `${clickRate}%`,
+                  detail: `${clickedCount.toLocaleString()} link clicks`,
+                  good: clickRate > 2,
+                },
+                {
+                  label: "Bounce Rate",
+                  value: `${bounceRate}%`,
+                  detail: `${bouncedCount.toLocaleString()} bounced`,
+                  good: bounceRate === 0,
+                },
+                {
+                  label: "Complaint Rate",
+                  value: `${complaintRate}%`,
+                  detail: `${complainedCount} spam complaints`,
+                  good: complainedCount === 0,
+                },
+                {
+                  label: "Unsubscribes",
+                  value: String(unsubscribedCount),
+                  detail: "removed from list",
+                  good: unsubscribedCount === 0,
+                },
+              ].map((item) => (
+                <div
+                  key={item.label}
+                  className="flex items-center justify-between p-3 border border-gray-100 rounded-xl"
+                >
+                  <div>
+                    <p className="text-sm font-semibold text-gray-900">
+                      {item.label}
+                    </p>
+                    <p className="text-xs text-gray-400">{item.detail}</p>
                   </div>
-                ))}
-              </div>
-              <p className="text-xs text-gray-400 text-center">
-                This list has been used in{" "}
-                {email.contactList._count.emailHistory} total campaign
-                {email.contactList._count.emailHistory !== 1 ? "s" : ""}
-              </p>
+                  <span
+                    className={`text-lg font-bold ${item.good ? "text-emerald-600" : "text-amber-600"}`}
+                  >
+                    {item.value}
+                  </span>
+                </div>
+              ))}
             </TabsContent>
           </Tabs>
         </div>
@@ -408,65 +439,47 @@ function EmailDetailDialog({
   );
 }
 
-// ── Main List Component ───────────────────────────────────────────────────────
+// ── Main List ─────────────────────────────────────────────────────────────────
 
 export function EmailHistoryList({
   emailHistory,
-  totalCount,
+  total,
   currentPage,
   totalPages,
 }: EmailHistoryListProps) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [isPending, startTransition] = useTransition();
-
   const [selectedItems, setSelectedItems] = useState<Set<string>>(new Set());
   const [isSelectAll, setIsSelectAll] = useState(false);
   const [openDetailId, setOpenDetailId] = useState<string | null>(null);
 
-  const handleSelectItem = (itemId: string, checked: boolean) => {
-    const newSelected = new Set(selectedItems);
-    if (checked) newSelected.add(itemId);
-    else {
-      newSelected.delete(itemId);
-      setIsSelectAll(false);
-    }
-    setSelectedItems(newSelected);
+  const handleSelectItem = (id: string, checked: boolean) => {
+    const next = new Set(selectedItems);
+    checked ? next.add(id) : next.delete(id);
+    if (!checked) setIsSelectAll(false);
+    setSelectedItems(next);
   };
 
   const handleSelectAll = (checked: boolean) => {
-    if (checked) {
-      setSelectedItems(new Set(emailHistory.map((item) => item.id)));
-      setIsSelectAll(true);
-    } else {
-      setSelectedItems(new Set());
-      setIsSelectAll(false);
-    }
+    setSelectedItems(
+      checked ? new Set(emailHistory.map((i) => i.id)) : new Set(),
+    );
+    setIsSelectAll(checked);
   };
 
   const handleBulkDelete = () => {
-    if (selectedItems.size === 0) return;
     startTransition(async () => {
       try {
         await deleteManyEmailHistories(Array.from(selectedItems));
         setSelectedItems(new Set());
         setIsSelectAll(false);
-        toast("Success", {
-          description: (
-            <span className="!text-green-600">
-              Deleted {selectedItems.size} email(s) successfully.
-            </span>
-          ),
-        });
+        toast.success(
+          `Deleted ${selectedItems.size} campaign${selectedItems.size !== 1 ? "s" : ""}.`,
+        );
         router.refresh();
       } catch {
-        toast("Error", {
-          description: (
-            <span className="!text-red-500">
-              Failed to delete selected emails.
-            </span>
-          ),
-        });
+        toast.error("Failed to delete selected campaigns.");
       }
     });
   };
@@ -477,101 +490,61 @@ export function EmailHistoryList({
         await clearAllEmailHistories();
         setSelectedItems(new Set());
         setIsSelectAll(false);
-        toast("Success", {
-          description: (
-            <span className="!text-green-600">All email history cleared.</span>
-          ),
-        });
+        toast.success("All email history cleared.");
         router.refresh();
       } catch {
-        toast("Error", {
-          description: (
-            <span className="!text-red-500">Failed to clear history.</span>
-          ),
-        });
+        toast.error("Failed to clear history.");
       }
     });
   };
 
-  const handleSingleDelete = (itemId: string) => {
+  const handleSingleDelete = (id: string) => {
     startTransition(async () => {
       try {
-        await deleteEmailHistory(itemId);
-        toast("Success", {
-          description: <span className="!text-green-600">Email deleted.</span>,
-        });
+        await deleteEmailHistory(id);
+        toast.success("Campaign deleted.");
         router.refresh();
       } catch {
-        toast("Error", {
-          description: <span className="!text-red-500">Failed to delete.</span>,
-        });
+        toast.error("Failed to delete.");
       }
     });
   };
 
-  const navigateToPage = (page: number) => {
+  const navigatePage = (page: number) => {
     const params = new URLSearchParams(searchParams.toString());
-    params.set("page", page.toString());
+    params.set("page", String(page));
     router.push(`/email-history?${params.toString()}`);
-  };
-
-  const getOverallStatus = (email: EmailHistoryItem) => {
-    if (email.failedCount > 0 && email.deliveredCount === 0)
-      return {
-        label: "Failed",
-        color: "bg-red-100 text-red-700 border-red-200",
-        Icon: XCircle,
-      };
-    if (email.deliveredCount > 0 && email.failedCount === 0)
-      return {
-        label: "Delivered",
-        color: "bg-green-100 text-green-700 border-green-200",
-        Icon: CheckCircle,
-      };
-    if (email.deliveredCount > 0 && email.failedCount > 0)
-      return {
-        label: "Partial",
-        color: "bg-yellow-100 text-yellow-700 border-yellow-200",
-        Icon: AlertCircle,
-      };
-    return {
-      label: "Sent",
-      color: "bg-blue-100 text-blue-700 border-blue-200",
-      Icon: Send,
-    };
   };
 
   if (emailHistory.length === 0) {
     return (
-      <Card>
-        <CardContent className="text-center py-12">
-          <Mail className="mx-auto h-12 w-12 text-gray-400" />
-          <h3 className="mt-4 text-lg font-medium text-gray-900">
-            No email campaigns found
-          </h3>
-          <p className="mt-2 text-gray-500">
-            {totalCount === 0
-              ? "You haven't sent any emails yet."
-              : "No campaigns match your filters."}
-          </p>
-          {totalCount === 0 && (
-            <div className="mt-6">
-              <Button asChild>
-                <Link href="/send-email">
-                  <Mail className="mr-2 h-4 w-4" />
-                  Send Your First Email
-                </Link>
-              </Button>
-            </div>
-          )}
-        </CardContent>
-      </Card>
+      <div className="flex flex-col items-center justify-center py-20 bg-white border border-gray-100 rounded-2xl shadow-sm text-center">
+        <div className="h-14 w-14 rounded-2xl bg-gray-100 flex items-center justify-center mb-4">
+          <Mail className="h-6 w-6 text-gray-400" />
+        </div>
+        <h3 className="text-base font-semibold text-gray-900">
+          No campaigns found
+        </h3>
+        <p className="text-sm text-gray-500 mt-1 max-w-xs">
+          {total === 0
+            ? "You haven't sent any campaigns yet."
+            : "No campaigns match your current filters."}
+        </p>
+        {total === 0 && (
+          <Button size="sm" className="mt-5" asChild>
+            <Link href="/send-email">
+              <Send className="mr-1.5 h-3.5 w-3.5" />
+              Send First Campaign
+            </Link>
+          </Button>
+        )}
+      </div>
     );
   }
 
   return (
-    <div className="space-y-5">
-      {/* Toolbar */}
+    <div className="space-y-4">
+      {/* ── Toolbar ───────────────────────────────────────────────────── */}
       <div className="flex items-center justify-between flex-wrap gap-3">
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2">
@@ -580,13 +553,13 @@ export function EmailHistoryList({
               onCheckedChange={handleSelectAll}
               disabled={isPending}
             />
-            <span className="text-sm text-muted-foreground">
+            <span className="text-sm text-gray-500 select-none">
               Select all ({emailHistory.length})
             </span>
           </div>
           {selectedItems.size > 0 && (
             <div className="flex items-center gap-2">
-              <span className="text-sm text-muted-foreground">
+              <span className="text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
                 {selectedItems.size} selected
               </span>
               <Button
@@ -595,8 +568,8 @@ export function EmailHistoryList({
                 onClick={handleBulkDelete}
                 disabled={isPending}
               >
-                <Trash2 className="h-4 w-4 mr-1" />
-                Delete Selected
+                <Trash2 className="mr-1.5 h-3.5 w-3.5" />
+                Delete selected
               </Button>
             </div>
           )}
@@ -605,285 +578,165 @@ export function EmailHistoryList({
           variant="outline"
           size="sm"
           onClick={handleClearAll}
-          disabled={isPending || totalCount === 0}
-          className="text-destructive hover:text-destructive bg-transparent"
+          disabled={isPending || emailHistory.length === 0}
+          className="text-red-600 border-red-200 hover:bg-red-50"
         >
-          <Trash className="h-4 w-4 mr-1" />
-          Clear All
+          <Trash className="mr-1.5 h-3.5 w-3.5" />
+          Clear all history
         </Button>
       </div>
 
-      {/* Summary + pagination header */}
-      <div className="flex items-center justify-between text-sm text-gray-600 flex-wrap gap-2">
-        <p>
-          Showing {(currentPage - 1) * 10 + 1}–
-          {Math.min(currentPage * 10, totalCount)} of {totalCount} campaigns
-        </p>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => navigateToPage(currentPage - 1)}
-            disabled={currentPage <= 1}
-          >
-            <ChevronLeft className="h-4 w-4 mr-1" />
-            Previous
-          </Button>
-          <span className="text-sm">
-            Page {currentPage} of {totalPages}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => navigateToPage(currentPage + 1)}
-            disabled={currentPage >= totalPages}
-          >
-            Next
-            <ChevronRight className="h-4 w-4 ml-1" />
-          </Button>
-        </div>
-      </div>
-
-      {/* Cards */}
-      <div className="space-y-4">
+      {/* ── Campaign cards ────────────────────────────────────────────── */}
+      <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden divide-y divide-gray-50">
         {emailHistory.map((email) => {
-          const { label, color, Icon } = getOverallStatus(email);
+          const { label, cls, Icon } = getStatusStyle(email);
+          const deliveryRate =
+            email.sentCount > 0
+              ? Math.round((email.deliveredCount / email.sentCount) * 100)
+              : 0;
+          const openRate =
+            email.deliveredCount > 0
+              ? Math.round((email.openedCount / email.deliveredCount) * 100)
+              : 0;
+          const isSelected = selectedItems.has(email.id);
+          const detailEmail = emailHistory.find((e) => e.id === openDetailId);
 
           return (
-            <Card key={email.id} className="hover:shadow-md transition-shadow">
-              <CardHeader className="pb-3">
-                <div className="flex items-start justify-between">
-                  <div className="flex items-start gap-3 flex-1 min-w-0">
-                    <Checkbox
-                      checked={selectedItems.has(email.id)}
-                      onCheckedChange={(checked) =>
-                        handleSelectItem(email.id, checked as boolean)
-                      }
-                      disabled={isPending}
-                      className="mt-1"
-                    />
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2 mb-2 flex-wrap">
-                        <CardTitle className="text-base font-semibold text-gray-900 truncate">
-                          {email.subject}
-                        </CardTitle>
-                        <Badge className={`${color} border text-xs`}>
-                          <Icon className="h-3 w-3 mr-1" />
-                          {label}
-                        </Badge>
-                      </div>
+            <div
+              key={email.id}
+              className={`flex items-start gap-4 px-5 py-4 hover:bg-gray-50/50 transition-colors cursor-pointer ${isSelected ? "bg-blue-50/30" : ""}`}
+              onClick={() => setOpenDetailId(email.id)}
+            >
+              {/* Checkbox */}
+              <div className="pt-0.5" onClick={(e) => e.stopPropagation()}>
+                <Checkbox
+                  checked={isSelected}
+                  onCheckedChange={(c) => handleSelectItem(email.id, !!c)}
+                  disabled={isPending}
+                />
+              </div>
 
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-1.5 text-sm text-gray-600">
-                        <div className="flex items-center gap-1">
-                          <Users className="h-3.5 w-3.5 text-blue-500 shrink-0" />
-                          <span className="font-medium">List:</span>
-                          <span className="truncate">
-                            {email.contactList.name}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <Globe className="h-3.5 w-3.5 text-purple-500 shrink-0" />
-                          <span className="font-medium">Domain:</span>
-                          <span className="text-purple-600 truncate">
-                            {email.contactList.domain.domain}
-                          </span>
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <Calendar className="h-3.5 w-3.5 text-gray-400 shrink-0" />
-                          <span className="font-medium">Sent:</span>
-                          <span>
-                            {new Date(email.createdAt).toLocaleDateString()} at{" "}
-                            {new Date(email.createdAt).toLocaleTimeString([], {
-                              hour: "2-digit",
-                              minute: "2-digit",
-                            })}
-                          </span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
+              {/* Icon */}
+              <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-blue-50 to-blue-100 border border-blue-100 flex items-center justify-center shrink-0">
+                <Mail className="h-4 w-4 text-blue-600" />
+              </div>
 
-                  {/* Actions */}
-                  <div className="flex items-center gap-2 shrink-0 ml-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => handleSingleDelete(email.id)}
-                      disabled={isPending}
-                      className="text-destructive hover:text-destructive h-8 w-8 p-0"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                    </Button>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setOpenDetailId(email.id)}
-                    >
-                      <BarChart3 className="h-4 w-4 mr-1" />
-                      Details
-                    </Button>
-                  </div>
+              {/* Content */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-start justify-between gap-2 flex-wrap">
+                  <p className="text-sm font-semibold text-gray-900 truncate">
+                    {email.subject}
+                  </p>
+                  <span
+                    className={`inline-flex items-center gap-1 text-[10px] font-semibold px-2 py-0.5 rounded-full shrink-0 ${cls}`}
+                  >
+                    <Icon className="h-2.5 w-2.5" /> {label}
+                  </span>
                 </div>
-              </CardHeader>
-
-              <CardContent>
-                {/* 5-metric grid: sent, delivered, opened, clicked, failed */}
-                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-                  {[
-                    {
-                      label: "Sent",
-                      value: email.sentCount,
-                      from: "from-blue-50",
-                      to: "to-blue-100",
-                      border: "border-blue-200",
-                      text: "text-blue-700",
-                      Icon: Send,
-                    },
-                    {
-                      label: "Delivered",
-                      value: email.deliveredCount,
-                      from: "from-green-50",
-                      to: "to-green-100",
-                      border: "border-green-200",
-                      text: "text-green-700",
-                      Icon: CheckCircle,
-                    },
-                    {
-                      label: "Opened",
-                      value: email.openedCount,
-                      from: "from-purple-50",
-                      to: "to-purple-100",
-                      border: "border-purple-200",
-                      text: "text-purple-700",
-                      Icon: Eye,
-                    },
-                    {
-                      label: "Clicked",
-                      value: email.clickedCount,
-                      from: "from-indigo-50",
-                      to: "to-indigo-100",
-                      border: "border-indigo-200",
-                      text: "text-indigo-700",
-                      Icon: MousePointer,
-                    },
-                    {
-                      label: "Failed",
-                      value: email.failedCount,
-                      from: "from-red-50",
-                      to: "to-red-100",
-                      border: "border-red-200",
-                      text: "text-red-700",
-                      Icon: XCircle,
-                    },
-                  ].map((m) => (
-                    <div
-                      key={m.label}
-                      className={`text-center p-3 bg-gradient-to-br ${m.from} ${m.to} rounded-lg border ${m.border}`}
-                    >
-                      <div className="flex items-center justify-center gap-1 mb-1">
-                        <m.Icon className={`h-4 w-4 ${m.text}`} />
-                        <span className={`text-xl font-bold ${m.text}`}>
-                          {m.value}
-                        </span>
-                      </div>
-                      <div className={`text-xs ${m.text} font-medium`}>
-                        {m.label}
-                      </div>
-                    </div>
-                  ))}
+                <div className="flex items-center gap-3 mt-1 flex-wrap">
+                  <span className="text-xs text-gray-400 flex items-center gap-1">
+                    <Users className="h-3 w-3" />
+                    {email.contactList.name}
+                  </span>
+                  <span className="text-xs text-gray-400 flex items-center gap-1">
+                    <Calendar className="h-3 w-3" />
+                    {new Date(email.createdAt).toLocaleDateString("en-US", {
+                      month: "short",
+                      day: "numeric",
+                      year: "numeric",
+                    })}
+                  </span>
+                  <span className="text-xs text-gray-400 flex items-center gap-1">
+                    <Globe className="h-3 w-3" />
+                    {email.contactList.domain.domain}
+                  </span>
                 </div>
+              </div>
 
-                {/* Rates row */}
-                {email.sentCount > 0 && (
-                  <div className="mt-3 pt-3 border-t border-gray-100 grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
-                    <div className="flex items-center justify-between">
-                      <span className="text-gray-500">Delivery Rate:</span>
-                      <span className="font-bold text-green-700">
-                        {Math.round(
-                          (email.deliveredCount / email.sentCount) * 100,
-                        )}
-                        %
-                      </span>
-                    </div>
-                    {email.deliveredCount > 0 && (
-                      <div className="flex items-center justify-between">
-                        <span className="text-gray-500">Open Rate:</span>
-                        <span className="font-bold text-purple-700">
-                          {Math.round(
-                            (email.openedCount / email.deliveredCount) * 100,
-                          )}
-                          %
-                        </span>
-                      </div>
-                    )}
-                    {email.deliveredCount > 0 && (
-                      <div className="flex items-center justify-between">
-                        <span className="text-gray-500">Click Rate:</span>
-                        <span className="font-bold text-indigo-700">
-                          {Math.round(
-                            (email.clickedCount / email.deliveredCount) * 100,
-                          )}
-                          %
-                        </span>
-                      </div>
-                    )}
+              {/* Stats */}
+              <div className="hidden md:flex items-center gap-5 shrink-0 text-center">
+                {[
+                  {
+                    label: "Sent",
+                    value: email.sentCount.toLocaleString(),
+                    color: "text-gray-900",
+                  },
+                  {
+                    label: "Delivered",
+                    value: `${deliveryRate}%`,
+                    color: "text-emerald-600",
+                  },
+                  {
+                    label: "Opened",
+                    value: `${openRate}%`,
+                    color: "text-purple-600",
+                  },
+                  {
+                    label: "Clicked",
+                    value: email.clickedCount.toLocaleString(),
+                    color: "text-indigo-600",
+                  },
+                ].map(({ label, value, color }) => (
+                  <div key={label}>
+                    <p className={`text-sm font-bold ${color}`}>{value}</p>
+                    <p className="text-[10px] text-gray-400 font-medium uppercase tracking-wider">
+                      {label}
+                    </p>
                   </div>
-                )}
-              </CardContent>
+                ))}
+              </div>
 
-              {/* Detail dialog for this card */}
-              <EmailDetailDialog
-                email={email}
-                open={openDetailId === email.id}
-                onClose={() => setOpenDetailId(null)}
-              />
-            </Card>
+              {/* Delete */}
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  handleSingleDelete(email.id);
+                }}
+                disabled={isPending}
+                className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0"
+                title="Delete"
+              >
+                <Trash2 className="h-3.5 w-3.5" />
+              </button>
+            </div>
           );
         })}
       </div>
 
-      {/* Pagination footer */}
+      {/* ── Detail dialogs ─────────────────────────────────────────────── */}
+      {emailHistory.map((email) => (
+        <EmailDetailDialog
+          key={email.id}
+          email={email}
+          open={openDetailId === email.id}
+          onClose={() => setOpenDetailId(null)}
+        />
+      ))}
+
+      {/* ── Pagination ────────────────────────────────────────────────── */}
       {totalPages > 1 && (
-        <div className="flex items-center justify-center gap-2 pt-4">
-          <Button
-            variant="outline"
-            onClick={() => navigateToPage(currentPage - 1)}
-            disabled={currentPage <= 1}
-          >
-            <ChevronLeft className="h-4 w-4 mr-1" />
-            Previous
-          </Button>
-
-          <div className="flex gap-1">
-            {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
-              let pageNum: number;
-              if (totalPages <= 5) pageNum = i + 1;
-              else if (currentPage <= 3) pageNum = i + 1;
-              else if (currentPage >= totalPages - 2)
-                pageNum = totalPages - 4 + i;
-              else pageNum = currentPage - 2 + i;
-
-              return (
-                <Button
-                  key={pageNum}
-                  variant={currentPage === pageNum ? "default" : "outline"}
-                  size="sm"
-                  onClick={() => navigateToPage(pageNum)}
-                >
-                  {pageNum}
-                </Button>
-              );
-            })}
+        <div className="flex items-center justify-between pt-2">
+          <p className="text-sm text-gray-500">
+            Page {currentPage} of {totalPages} · {total.toLocaleString()} total
+          </p>
+          <div className="flex gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigatePage(currentPage - 1)}
+              disabled={currentPage <= 1}
+            >
+              <ChevronLeft className="h-4 w-4 mr-1" /> Previous
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => navigatePage(currentPage + 1)}
+              disabled={currentPage >= totalPages}
+            >
+              Next <ChevronRight className="h-4 w-4 ml-1" />
+            </Button>
           </div>
-
-          <Button
-            variant="outline"
-            onClick={() => navigateToPage(currentPage + 1)}
-            disabled={currentPage >= totalPages}
-          >
-            Next
-            <ChevronRight className="h-4 w-4 ml-1" />
-          </Button>
         </div>
       )}
     </div>

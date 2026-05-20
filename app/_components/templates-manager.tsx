@@ -1,14 +1,14 @@
 "use client";
 
 /**
- * templates-manager.tsx — UPDATED
- * ────────────────────────────────
- * Replaces the old Tiptap form modal with the VisualEmailBuilder.
- * Keeps all existing template cards, search, filters, and preview logic.
- * Adds designJson persistence so templates are re-editable visually.
+ * templates-manager.tsx
+ * Keeps all existing functionality + adds URL param handling:
+ *   ?editId=<savedTemplateId>       → open that template in the visual/text builder
+ *   ?duplicateBuiltin=<builtinId>   → duplicate a built-in template then open it
  */
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { useSearchParams, useRouter } from "next/navigation";
 import { Button } from "@/app/_components/ui/button";
 import { Input } from "@/app/_components/ui/input";
 import { Label } from "@/app/_components/ui/label";
@@ -37,7 +37,6 @@ import {
   Eye,
   Copy,
   Search,
-  FileText,
   Sparkles,
   AlertCircle,
   CheckCircle,
@@ -47,18 +46,13 @@ import {
   Wand2,
   Type,
   Clock,
-  Tag,
-  ChevronRight,
   Braces,
 } from "lucide-react";
-
 import RichTextEditor from "@/app/_components/rich-text-editor";
 import { BUILTIN_TEMPLATES } from "@/app/_lib/email/templates";
 import VisualEmailBuilder, { DesignJson, EmailBlock } from "./email-builder";
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Types
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Types ─────────────────────────────────────────────────────────────────────
 
 interface EmailTemplate {
   id: string;
@@ -66,7 +60,7 @@ interface EmailTemplate {
   description?: string | null;
   subject?: string | null;
   body: string;
-  designJson?: string | null; // new field — block state for visual editor
+  designJson?: string | null;
   category: string;
   isBuiltIn: boolean;
   createdAt: string;
@@ -94,58 +88,15 @@ const CATEGORY_COLORS: Record<string, string> = {
   transactional: "bg-teal-100 text-teal-700 border-teal-200",
 };
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Preview Modal (accurate iframe, desktop/mobile)
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Preview HTML builder ──────────────────────────────────────────────────────
 
 function buildPreviewHtml(body: string) {
-  // If the body already contains full HTML (from visual builder), use it directly
-  if (body.trim().startsWith("<!DOCTYPE") || body.trim().startsWith("<html")) {
+  if (body.trim().startsWith("<!DOCTYPE") || body.trim().startsWith("<html"))
     return body;
-  }
-  // Otherwise wrap Tiptap HTML
-  return `<!DOCTYPE html>
-<html>
-<head>
-  <meta charset="UTF-8"/>
-  <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-  <style>
-    *{box-sizing:border-box;margin:0;padding:0}
-    body{background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}
-    .wrapper{padding:32px 16px}
-    .container{max-width:600px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 8px rgba(0,0,0,0.1)}
-    .body-content{padding:40px 48px;color:#374151;font-size:15px;line-height:1.7}
-    .footer{padding:20px 48px;border-top:1px solid #e5e7eb;text-align:center}
-    .footer p{font-size:12px;color:#9ca3af}
-    .footer a{color:#6b7280;text-decoration:underline}
-    .body-content h1{font-size:28px;font-weight:700;margin-bottom:16px;color:#111827;line-height:1.25}
-    .body-content h2{font-size:22px;font-weight:600;margin-bottom:14px;color:#111827;line-height:1.3}
-    .body-content h3{font-size:18px;font-weight:600;margin-bottom:12px;color:#111827}
-    .body-content p{margin-bottom:16px}
-    .body-content ul,.body-content ol{margin-bottom:16px;padding-left:24px}
-    .body-content li{margin-bottom:6px}
-    .body-content a{color:#2563eb;text-decoration:underline}
-    .body-content strong{font-weight:700}
-    .body-content em{font-style:italic}
-    .body-content blockquote{padding:12px 16px;border-left:4px solid #e5e7eb;color:#6b7280;margin-bottom:16px;font-style:italic}
-    .body-content img{max-width:100%;border-radius:6px;height:auto}
-    .body-content hr{border:none;border-top:1px solid #e5e7eb;margin:24px 0}
-    .body-content table{width:100%;border-collapse:collapse;margin-bottom:16px}
-    .body-content td,.body-content th{padding:10px 12px;border:1px solid #e5e7eb;text-align:left}
-    .body-content th{background:#f9fafb;font-weight:600}
-    @media(max-width:600px){.body-content{padding:24px 20px!important}.footer{padding:16px 20px!important}}
-  </style>
-</head>
-<body>
-  <div class="wrapper">
-    <div class="container">
-      <div class="body-content">${body || '<p style="color:#9ca3af;">No content</p>'}</div>
-      <div class="footer"><p>Your Brand · <a href="#">Unsubscribe</a></p></div>
-    </div>
-  </div>
-</body>
-</html>`;
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"/><meta name="viewport" content="width=device-width,initial-scale=1.0"/><style>*{box-sizing:border-box;margin:0;padding:0}body{background:#f3f4f6;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif}.wrapper{padding:32px 16px}.container{max-width:600px;margin:0 auto;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 8px rgba(0,0,0,.1)}.body-content{padding:40px 48px;color:#374151;font-size:15px;line-height:1.7}.footer{padding:20px 48px;border-top:1px solid #e5e7eb;text-align:center}.footer p{font-size:12px;color:#9ca3af}.footer a{color:#6b7280;text-decoration:underline}.body-content h1{font-size:28px;font-weight:700;margin-bottom:16px;color:#111827}.body-content h2{font-size:22px;font-weight:600;margin-bottom:14px;color:#111827}.body-content p{margin-bottom:16px}.body-content ul,.body-content ol{margin-bottom:16px;padding-left:24px}.body-content li{margin-bottom:6px}.body-content a{color:#2563eb}.body-content strong{font-weight:700}.body-content img{max-width:100%;border-radius:6px}.body-content table{width:100%;border-collapse:collapse;margin-bottom:16px}.body-content td,.body-content th{padding:10px 12px;border:1px solid #e5e7eb}.body-content th{background:#f9fafb;font-weight:600}</style></head><body><div class="wrapper"><div class="container"><div class="body-content">${body}</div><div class="footer"><p>Your Brand · <a href="#">Unsubscribe</a></p></div></div></div></body></html>`;
 }
+
+// ── Preview Modal ─────────────────────────────────────────────────────────────
 
 function PreviewModal({
   open,
@@ -159,17 +110,14 @@ function PreviewModal({
   const [viewMode, setViewMode] = useState<"desktop" | "mobile">("desktop");
   if (!template) return null;
 
-  const isVisual = !!template.designJson;
-
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-5xl h-[92vh] flex flex-col p-0 gap-0">
-        {/* Header */}
         <div className="flex items-center justify-between px-5 py-3.5 border-b border-gray-200 bg-white rounded-t-xl shrink-0">
           <div className="min-w-0 flex-1">
             <DialogTitle className="text-sm font-semibold text-gray-900 truncate pr-4 flex items-center gap-2">
               {template.name}
-              {isVisual && (
+              {template.designJson && (
                 <span className="inline-flex items-center gap-1 bg-blue-50 border border-blue-200 text-blue-700 text-[10px] font-semibold px-2 py-0.5 rounded-full">
                   <Wand2 className="h-2.5 w-2.5" /> Visual
                 </span>
@@ -183,18 +131,20 @@ function PreviewModal({
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <div className="flex bg-gray-100 rounded-lg p-0.5 gap-0.5">
-              <button
-                onClick={() => setViewMode("desktop")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${viewMode === "desktop" ? "bg-white shadow-sm text-gray-900" : "text-gray-500 hover:text-gray-700"}`}
-              >
-                <Monitor className="h-3.5 w-3.5" /> Desktop
-              </button>
-              <button
-                onClick={() => setViewMode("mobile")}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${viewMode === "mobile" ? "bg-white shadow-sm text-gray-900" : "text-gray-500 hover:text-gray-700"}`}
-              >
-                <Smartphone className="h-3.5 w-3.5" /> Mobile
-              </button>
+              {(["desktop", "mobile"] as const).map((m) => (
+                <button
+                  key={m}
+                  onClick={() => setViewMode(m)}
+                  className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-all ${viewMode === m ? "bg-white shadow-sm text-gray-900" : "text-gray-500"}`}
+                >
+                  {m === "desktop" ? (
+                    <Monitor className="h-3.5 w-3.5" />
+                  ) : (
+                    <Smartphone className="h-3.5 w-3.5" />
+                  )}
+                  {m.charAt(0).toUpperCase() + m.slice(1)}
+                </button>
+              ))}
             </div>
             <button
               onClick={onClose}
@@ -205,30 +155,22 @@ function PreviewModal({
           </div>
         </div>
 
-        {/* Inbox chrome */}
         <div className="px-5 py-3 bg-white border-b border-gray-100 shrink-0">
           <div className="flex items-start gap-3">
             <div className="w-9 h-9 rounded-full bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center text-white text-sm font-bold shrink-0">
               {template.name.charAt(0).toUpperCase()}
             </div>
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 mb-0.5">
-                <span className="text-sm font-semibold text-gray-900">
-                  Your Brand
-                </span>
-                <span className="text-xs text-gray-400">
-                  &lt;noreply@yourdomain.com&gt;
-                </span>
-              </div>
+              <span className="text-sm font-semibold text-gray-900">
+                Your Brand
+              </span>
               <p className="text-sm font-medium text-gray-800 truncate">
                 {template.subject || "(No subject set)"}
               </p>
             </div>
-            <span className="text-xs text-gray-400 shrink-0">Preview</span>
           </div>
         </div>
 
-        {/* Email iframe */}
         <div className="flex-1 overflow-auto bg-gray-200 p-6 flex justify-center">
           {viewMode === "mobile" ? (
             <div
@@ -278,9 +220,7 @@ function PreviewModal({
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Editor Mode Picker (shown when creating a new template)
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Editor Mode Picker ────────────────────────────────────────────────────────
 
 function EditorModePicker({
   onSelect,
@@ -293,8 +233,7 @@ function EditorModePicker({
         <DialogHeader>
           <DialogTitle>Choose your editor</DialogTitle>
           <DialogDescription>
-            Pick how you'd like to build this template. You can always switch
-            later.
+            Pick how you'd like to build this template.
           </DialogDescription>
         </DialogHeader>
         <div className="grid grid-cols-2 gap-4 pt-2">
@@ -302,7 +241,7 @@ function EditorModePicker({
             onClick={() => onSelect("visual")}
             className="flex flex-col items-center gap-3 p-6 border-2 border-gray-200 rounded-2xl hover:border-blue-500 hover:bg-blue-50 transition-all group text-left"
           >
-            <div className="w-12 h-12 rounded-xl bg-blue-100 group-hover:bg-blue-200 flex items-center justify-center transition-colors">
+            <div className="w-12 h-12 rounded-xl bg-blue-100 group-hover:bg-blue-200 flex items-center justify-center">
               <Wand2 className="h-6 w-6 text-blue-600" />
             </div>
             <div>
@@ -310,8 +249,7 @@ function EditorModePicker({
                 Visual Builder
               </p>
               <p className="text-xs text-gray-500 leading-relaxed">
-                Drag-and-drop blocks, visual styling, and pixel-perfect layouts.
-                Best for marketing emails.
+                Drag-and-drop blocks, visual styling, pixel-perfect layouts.
               </p>
             </div>
             <span className="inline-flex items-center gap-1 text-xs font-semibold text-blue-600 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
@@ -323,7 +261,7 @@ function EditorModePicker({
             onClick={() => onSelect("text")}
             className="flex flex-col items-center gap-3 p-6 border-2 border-gray-200 rounded-2xl hover:border-gray-400 hover:bg-gray-50 transition-all group text-left"
           >
-            <div className="w-12 h-12 rounded-xl bg-gray-100 group-hover:bg-gray-200 flex items-center justify-center transition-colors">
+            <div className="w-12 h-12 rounded-xl bg-gray-100 group-hover:bg-gray-200 flex items-center justify-center">
               <Type className="h-6 w-6 text-gray-600" />
             </div>
             <div>
@@ -331,8 +269,8 @@ function EditorModePicker({
                 Rich Text Editor
               </p>
               <p className="text-xs text-gray-500 leading-relaxed">
-                Classic text editor with formatting. Best for plain
-                transactional emails and quick drafts.
+                Classic text editor with formatting. Best for transactional
+                emails.
               </p>
             </div>
             <span className="inline-flex items-center gap-1 text-xs font-semibold text-gray-500 bg-gray-100 border border-gray-200 px-2 py-0.5 rounded-full">
@@ -345,9 +283,7 @@ function EditorModePicker({
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Text-mode Create/Edit Form (for plain templates — Tiptap)
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Text Template Form ────────────────────────────────────────────────────────
 
 function TextTemplateForm({
   open,
@@ -438,7 +374,6 @@ function TextTemplateForm({
             <X className="h-4 w-4" />
           </button>
         </div>
-
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
           {error && (
             <Alert variant="destructive">
@@ -446,7 +381,6 @@ function TextTemplateForm({
               <AlertDescription>{error}</AlertDescription>
             </Alert>
           )}
-
           <div className="grid grid-cols-2 gap-4">
             <div className="space-y-1.5">
               <Label>Template Name *</Label>
@@ -472,7 +406,6 @@ function TextTemplateForm({
               </Select>
             </div>
           </div>
-
           <div className="space-y-1.5">
             <Label>
               Description{" "}
@@ -483,11 +416,10 @@ function TextTemplateForm({
             <Textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              placeholder="Brief description of this template..."
+              placeholder="Brief description..."
               rows={2}
             />
           </div>
-
           <div className="space-y-1.5">
             <Label>
               Default Subject{" "}
@@ -500,12 +432,7 @@ function TextTemplateForm({
               onChange={(e) => setSubject(e.target.value)}
               placeholder="e.g. Welcome to {company}!"
             />
-            <p className="text-xs text-gray-400">
-              Variables like {"{first_name}"}, {"{company}"} will be replaced at
-              send time.
-            </p>
           </div>
-
           <div className="space-y-1.5">
             <Label>Email Content *</Label>
             <RichTextEditor
@@ -515,7 +442,6 @@ function TextTemplateForm({
             />
           </div>
         </div>
-
         <div className="px-6 py-4 border-t border-gray-100 flex justify-end gap-3 shrink-0">
           <Button variant="outline" onClick={onClose}>
             Cancel
@@ -536,9 +462,7 @@ function TextTemplateForm({
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Template Card
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Template Card ─────────────────────────────────────────────────────────────
 
 function TemplateCard({
   template,
@@ -557,7 +481,6 @@ function TemplateCard({
 
   return (
     <div className="group bg-white border border-gray-200 rounded-2xl overflow-hidden hover:border-gray-300 hover:shadow-md transition-all duration-200 flex flex-col">
-      {/* Mini email preview thumbnail */}
       <div
         className="h-36 bg-gray-50 border-b border-gray-100 overflow-hidden cursor-pointer relative"
         onClick={onPreview}
@@ -583,7 +506,6 @@ function TemplateCard({
         </div>
       </div>
 
-      {/* Card body */}
       <div className="p-4 flex-1 flex flex-col">
         <div className="flex items-start justify-between gap-2 mb-1.5">
           <h3 className="font-semibold text-sm text-gray-900 truncate flex-1">
@@ -608,16 +530,10 @@ function TemplateCard({
             {template.description}
           </p>
         )}
-
         {template.subject && (
-          <div className="flex items-center gap-1 mb-2">
-            <span className="text-[10px] text-gray-400 font-medium">
-              Subject:
-            </span>
-            <p className="text-[10px] text-gray-500 truncate">
-              {template.subject}
-            </p>
-          </div>
+          <p className="text-[10px] text-gray-400 truncate mb-2">
+            Subject: {template.subject}
+          </p>
         )}
 
         <div className="flex items-center gap-1 mt-auto pt-2 border-t border-gray-50">
@@ -625,7 +541,6 @@ function TemplateCard({
             <Clock className="h-2.5 w-2.5" />
             {new Date(template.updatedAt).toLocaleDateString()}
           </span>
-
           {!template.isBuiltIn && (
             <>
               <button
@@ -666,9 +581,7 @@ function TemplateCard({
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Delete Confirm Dialog
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Delete Confirm ────────────────────────────────────────────────────────────
 
 function DeleteConfirmDialog({
   open,
@@ -711,11 +624,12 @@ function DeleteConfirmDialog({
   );
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Main TemplatesManager
-// ─────────────────────────────────────────────────────────────────────────────
+// ── Main TemplatesManager ─────────────────────────────────────────────────────
 
 export function TemplatesManager() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
+
   const [templates, setTemplates] = useState<EmailTemplate[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [search, setSearch] = useState("");
@@ -724,13 +638,11 @@ export function TemplatesManager() {
     "all",
   );
 
-  // UI state
   const [previewTemplate, setPreviewTemplate] = useState<EmailTemplate | null>(
     null,
   );
   const [showPreview, setShowPreview] = useState(false);
 
-  // Editor state
   const [showModePicker, setShowModePicker] = useState(false);
   const [editorMode, setEditorMode] = useState<EditorMode>("visual");
   const [showVisualBuilder, setShowVisualBuilder] = useState(false);
@@ -740,15 +652,16 @@ export function TemplatesManager() {
   );
   const [isSaving, setIsSaving] = useState(false);
 
-  // Delete state
   const [deleteTarget, setDeleteTarget] = useState<EmailTemplate | null>(null);
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Toast
   const [toast, setToast] = useState<{
     msg: string;
     type: "success" | "error";
   } | null>(null);
+
+  // Prevents URL param effect from running twice in StrictMode
+  const urlParamHandled = useRef(false);
 
   const showToast = (msg: string, type: "success" | "error" = "success") => {
     setToast({ msg, type });
@@ -770,7 +683,70 @@ export function TemplatesManager() {
     fetchTemplates();
   }, [fetchTemplates]);
 
-  // ── Create ───────────────────────────────────────────────────────────────
+  // ── URL param handling (Task 3 companion) ─────────────────────────────────
+  // After templates load, check for ?editId or ?duplicateBuiltin
+  useEffect(() => {
+    if (isLoading || urlParamHandled.current) return;
+
+    const editId = searchParams.get("editId");
+    const duplicateBuiltinId = searchParams.get("duplicateBuiltin");
+
+    if (editId) {
+      urlParamHandled.current = true;
+      const target = templates.find((t) => t.id === editId);
+      if (target) {
+        handleEdit(target);
+      }
+      // Clear param from URL
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("editId");
+      router.replace(`/templates${params.toString() ? `?${params}` : ""}`);
+    } else if (duplicateBuiltinId) {
+      urlParamHandled.current = true;
+      const builtin = BUILTIN_TEMPLATES.find(
+        (t) => t.id === duplicateBuiltinId,
+      );
+      if (builtin) {
+        // Duplicate it then open in visual builder
+        (async () => {
+          try {
+            const res = await fetch("/api/templates", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                name: `${builtin.name} (Copy)`,
+                description: builtin.description,
+                subject: builtin.subject,
+                body: builtin.body,
+                designJson: builtin.designJson,
+                category: builtin.category,
+              }),
+            });
+            if (!res.ok) throw new Error("Duplicate failed");
+            const newTemplate: EmailTemplate = await res.json();
+            await fetchTemplates();
+            showToast("Built-in template duplicated — opening editor…");
+            // Open visual builder with the new copy
+            setEditingTemplate(newTemplate);
+            setEditorMode("visual");
+            setShowVisualBuilder(true);
+          } catch (e) {
+            showToast(
+              e instanceof Error ? e.message : "Duplicate failed",
+              "error",
+            );
+          }
+        })();
+      }
+      // Clear param from URL
+      const params = new URLSearchParams(searchParams.toString());
+      params.delete("duplicateBuiltin");
+      router.replace(`/templates${params.toString() ? `?${params}` : ""}`);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isLoading, templates]);
+
+  // ── Create ────────────────────────────────────────────────────────────────
 
   const handleNewTemplate = () => {
     setEditingTemplate(null);
@@ -780,23 +756,18 @@ export function TemplatesManager() {
   const handleModeSelected = (mode: EditorMode) => {
     setEditorMode(mode);
     setShowModePicker(false);
-    if (mode === "visual") {
-      setShowVisualBuilder(true);
-    } else {
-      setShowTextForm(true);
-    }
+    if (mode === "visual") setShowVisualBuilder(true);
+    else setShowTextForm(true);
   };
 
-  // ── Edit ─────────────────────────────────────────────────────────────────
+  // ── Edit ──────────────────────────────────────────────────────────────────
 
   const handleEdit = (template: EmailTemplate) => {
     setEditingTemplate(template);
     if (template.designJson) {
-      // Has visual design data → open visual builder
       setEditorMode("visual");
       setShowVisualBuilder(true);
     } else {
-      // Plain text template → open text form
       setEditorMode("text");
       setShowTextForm(true);
     }
@@ -846,8 +817,6 @@ export function TemplatesManager() {
 
   const handleDuplicate = async (template: EmailTemplate) => {
     try {
-      console.log(template);
-      
       const res = await fetch("/api/templates", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -868,7 +837,7 @@ export function TemplatesManager() {
     }
   };
 
-  // ── Delete ───────────────────────────────────────────────────────────────
+  // ── Delete ────────────────────────────────────────────────────────────────
 
   const handleDelete = async () => {
     if (!deleteTarget) return;
@@ -896,7 +865,7 @@ export function TemplatesManager() {
       ? BUILTIN_TEMPLATES.map((t) => ({
           ...t,
           isBuiltIn: true,
-          designJson: null,
+          designJson: t.designJson || null,
           createdAt: new Date().toISOString(),
           updatedAt: new Date().toISOString(),
         }))
@@ -911,14 +880,11 @@ export function TemplatesManager() {
       const q = search.toLowerCase();
       return (
         t.name.toLowerCase().includes(q) ||
-        (t.description || "").toLowerCase().includes(q) ||
-        t.category.toLowerCase().includes(q)
+        (t.description || "").toLowerCase().includes(q)
       );
     }
     return true;
   });
-
-  // ── Visual builder with initial blocks ───────────────────────────────────
 
   const getInitialBlocks = (): EmailBlock[] | undefined => {
     if (!editingTemplate?.designJson) return undefined;
@@ -930,9 +896,7 @@ export function TemplatesManager() {
     }
   };
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // VISUAL BUILDER FULL-SCREEN (replaces the whole page content)
-  // ─────────────────────────────────────────────────────────────────────────
+  // ── Visual builder full-screen mode ──────────────────────────────────────
 
   if (showVisualBuilder) {
     return (
@@ -950,16 +914,14 @@ export function TemplatesManager() {
     );
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // MAIN TEMPLATE MANAGER UI
-  // ─────────────────────────────────────────────────────────────────────────
+  // ── Main UI ───────────────────────────────────────────────────────────────
 
   return (
     <div className="space-y-6">
       {/* Toast */}
       {toast && (
         <div
-          className={`fixed top-4 right-4 z-50 flex items-center gap-2 px-4 py-3 rounded-xl shadow-lg text-sm font-medium transition-all ${toast.type === "success" ? "bg-green-600 text-white" : "bg-red-600 text-white"}`}
+          className={`fixed top-4 right-4 z-50 flex items-center gap-2 px-4 py-3 rounded-xl shadow-lg text-sm font-medium ${toast.type === "success" ? "bg-green-600 text-white" : "bg-red-600 text-white"}`}
         >
           {toast.type === "success" ? (
             <CheckCircle className="h-4 w-4" />
@@ -987,7 +949,6 @@ export function TemplatesManager() {
       {/* Filters */}
       <div className="bg-white border border-gray-200 rounded-2xl p-4 space-y-3">
         <div className="flex flex-wrap gap-3">
-          {/* Tab filter */}
           <div className="flex bg-gray-100 rounded-xl p-1 gap-0.5">
             {[
               { key: "all", label: "All" },
@@ -1004,7 +965,6 @@ export function TemplatesManager() {
             ))}
           </div>
 
-          {/* Category filter */}
           <Select value={filterCategory} onValueChange={setFilterCategory}>
             <SelectTrigger className="w-[160px] text-sm h-9">
               <SelectValue />
@@ -1018,7 +978,6 @@ export function TemplatesManager() {
             </SelectContent>
           </Select>
 
-          {/* Search */}
           <div className="flex-1 min-w-[200px] relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
             <Input
@@ -1051,7 +1010,6 @@ export function TemplatesManager() {
               <div className="p-4 space-y-2">
                 <div className="h-4 bg-gray-100 rounded w-3/4" />
                 <div className="h-3 bg-gray-50 rounded w-full" />
-                <div className="h-3 bg-gray-50 rounded w-2/3" />
               </div>
             </div>
           ))}
@@ -1093,7 +1051,7 @@ export function TemplatesManager() {
         </div>
       )}
 
-      {/* Variables reference banner */}
+      {/* Variables banner */}
       <div className="flex items-start gap-3 bg-blue-50 border border-blue-200 rounded-xl p-4">
         <Braces className="h-5 w-5 text-blue-500 shrink-0 mt-0.5" />
         <div>
@@ -1111,18 +1069,13 @@ export function TemplatesManager() {
             </code>
             ,{" "}
             <code className="bg-blue-100 px-1 py-0.5 rounded font-mono">
-              {"{full_name}"}
-            </code>
-            ,{" "}
-            <code className="bg-blue-100 px-1 py-0.5 rounded font-mono">
               {"{email}"}
             </code>
             ,{" "}
             <code className="bg-blue-100 px-1 py-0.5 rounded font-mono">
               {"{company}"}
             </code>{" "}
-            anywhere in your templates. Each recipient will see their own data
-            when the email is sent.
+            anywhere in your templates.
           </p>
         </div>
       </div>

@@ -26,7 +26,7 @@ export default function RootLayout({
       <body className={`${poppins.className}`}>
         <Toaster />
         <Loader />
-        <Suspense>{children}</Suspense>
+        {children}
       </body>
     </html>
   );

@@ -3,12 +3,6 @@
 import { useState, useRef, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import {
-  Card,
-  CardContent,
-  CardHeader,
-  CardTitle,
-} from "@/app/_components/ui/card";
 import { Button } from "@/app/_components/ui/button";
 import { Input } from "@/app/_components/ui/input";
 import { Label } from "@/app/_components/ui/label";
@@ -44,13 +38,12 @@ import {
   Upload,
   Download,
   Send,
-  CheckCircle,
-  XCircle,
   ChevronLeft,
   ChevronRight,
   Mail,
   Building2,
   Phone,
+  Globe,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -86,29 +79,29 @@ interface ContactListDetailProps {
 
 const ITEMS_PER_PAGE = 50;
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ── Status Badge ──────────────────────────────────────────────────────────────
 
 function getStatusBadge(contact: Contact) {
   if (contact.isComplained)
     return (
-      <Badge className="bg-red-100 text-red-700 border-red-200 text-xs">
+      <Badge className="bg-red-100 text-red-700 border border-red-200 text-[10px]">
         Complained
       </Badge>
     );
   if (contact.isBounced)
     return (
-      <Badge className="bg-orange-100 text-orange-700 border-orange-200 text-xs">
+      <Badge className="bg-orange-100 text-orange-700 border border-orange-200 text-[10px]">
         Bounced
       </Badge>
     );
   if (!contact.isSubscribed)
     return (
-      <Badge className="bg-gray-100 text-gray-600 border-gray-200 text-xs">
+      <Badge className="bg-gray-100 text-gray-600 border border-gray-200 text-[10px]">
         Unsubscribed
       </Badge>
     );
   return (
-    <Badge className="bg-green-100 text-green-700 border-green-200 text-xs">
+    <Badge className="bg-emerald-100 text-emerald-700 border border-emerald-200 text-[10px]">
       Subscribed
     </Badge>
   );
@@ -154,12 +147,7 @@ function AddContactDialog({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to add contact");
-
-      toast("Success", {
-        description: (
-          <span className="!text-green-600">Contact added successfully.</span>
-        ),
-      });
+      toast.success("Contact added successfully.");
       setOpen(false);
       setEmail("");
       setFirstName("");
@@ -177,8 +165,7 @@ function AddContactDialog({
   return (
     <>
       <Button size="sm" onClick={() => setOpen(true)}>
-        <Plus className="h-4 w-4 mr-1.5" />
-        Add Contact
+        <Plus className="h-3.5 w-3.5 mr-1.5" /> Add Contact
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-md">
@@ -203,6 +190,7 @@ function AddContactDialog({
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 required
+                className="rounded-xl"
               />
             </div>
             <div className="grid grid-cols-2 gap-3">
@@ -212,6 +200,7 @@ function AddContactDialog({
                   placeholder="John"
                   value={firstName}
                   onChange={(e) => setFirstName(e.target.value)}
+                  className="rounded-xl"
                 />
               </div>
               <div className="space-y-1.5">
@@ -220,6 +209,7 @@ function AddContactDialog({
                   placeholder="Doe"
                   value={lastName}
                   onChange={(e) => setLastName(e.target.value)}
+                  className="rounded-xl"
                 />
               </div>
             </div>
@@ -229,6 +219,7 @@ function AddContactDialog({
                 placeholder="Acme Inc."
                 value={company}
                 onChange={(e) => setCompany(e.target.value)}
+                className="rounded-xl"
               />
             </div>
             <div className="space-y-1.5">
@@ -237,6 +228,7 @@ function AddContactDialog({
                 placeholder="+1 555 0000"
                 value={phone}
                 onChange={(e) => setPhone(e.target.value)}
+                className="rounded-xl"
               />
             </div>
             <DialogFooter>
@@ -297,10 +289,7 @@ function EditContactDialog({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Failed to update contact");
-
-      toast("Success", {
-        description: <span className="!text-green-600">Contact updated.</span>,
-      });
+      toast.success("Contact updated.");
       setOpen(false);
       onSuccess();
     } catch (err) {
@@ -312,10 +301,8 @@ function EditContactDialog({
 
   return (
     <>
-      <Button
-        variant="ghost"
-        size="sm"
-        className="h-7 w-7 p-0"
+      <button
+        className="p-1.5 rounded-lg text-gray-300 hover:text-blue-600 hover:bg-blue-50 transition-colors"
         onClick={() => {
           setFirstName(contact.firstName || "");
           setLastName(contact.lastName || "");
@@ -325,14 +312,17 @@ function EditContactDialog({
           setError("");
           setOpen(true);
         }}
+        title="Edit contact"
       >
         <Edit className="h-3.5 w-3.5" />
-      </Button>
+      </button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
             <DialogTitle>Edit Contact</DialogTitle>
-            <DialogDescription>{contact.email}</DialogDescription>
+            <DialogDescription className="font-mono text-xs">
+              {contact.email}
+            </DialogDescription>
           </DialogHeader>
           <form onSubmit={handleSubmit} className="space-y-4 mt-2">
             {error && (
@@ -347,6 +337,7 @@ function EditContactDialog({
                 <Input
                   value={firstName}
                   onChange={(e) => setFirstName(e.target.value)}
+                  className="rounded-xl"
                 />
               </div>
               <div className="space-y-1.5">
@@ -354,6 +345,7 @@ function EditContactDialog({
                 <Input
                   value={lastName}
                   onChange={(e) => setLastName(e.target.value)}
+                  className="rounded-xl"
                 />
               </div>
             </div>
@@ -362,11 +354,16 @@ function EditContactDialog({
               <Input
                 value={company}
                 onChange={(e) => setCompany(e.target.value)}
+                className="rounded-xl"
               />
             </div>
             <div className="space-y-1.5">
               <Label>Phone</Label>
-              <Input value={phone} onChange={(e) => setPhone(e.target.value)} />
+              <Input
+                value={phone}
+                onChange={(e) => setPhone(e.target.value)}
+                className="rounded-xl"
+              />
             </div>
             <div className="space-y-1.5">
               <Label>Status</Label>
@@ -374,7 +371,7 @@ function EditContactDialog({
                 value={isSubscribed ? "subscribed" : "unsubscribed"}
                 onValueChange={(v) => setIsSubscribed(v === "subscribed")}
               >
-                <SelectTrigger>
+                <SelectTrigger className="rounded-xl">
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
@@ -421,7 +418,6 @@ function CsvImportDialog({
   const parseCSV = (text: string) => {
     const lines = text.trim().split(/\r?\n/);
     if (lines.length < 2) return [];
-
     const headers = lines[0]
       .split(",")
       .map((h) => h.trim().toLowerCase().replace(/['"]/g, ""));
@@ -434,9 +430,7 @@ function CsvImportDialog({
     const phoneIdx = headers.findIndex(
       (h) => h.includes("phone") || h === "tel",
     );
-
     if (emailIdx === -1) throw new Error("CSV must have an 'email' column");
-
     return lines
       .slice(1)
       .map((line) => {
@@ -462,8 +456,7 @@ function CsvImportDialog({
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
-        const contacts = parseCSV(ev.target?.result as string);
-        setParsed(contacts);
+        setParsed(parseCSV(ev.target?.result as string));
       } catch (err) {
         setError(err instanceof Error ? err.message : "Failed to parse CSV");
         setParsed([]);
@@ -484,15 +477,9 @@ function CsvImportDialog({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Import failed");
-
-      toast("Success", {
-        description: (
-          <span className="!text-green-600">
-            Imported {data.added} contacts
-            {data.skipped > 0 ? ` (${data.skipped} duplicates skipped)` : ""}.
-          </span>
-        ),
-      });
+      toast.success(
+        `Imported ${data.added} contacts${data.skipped > 0 ? ` (${data.skipped} skipped)` : ""}.`,
+      );
       setOpen(false);
       setParsed([]);
       setFileName("");
@@ -508,8 +495,7 @@ function CsvImportDialog({
   return (
     <>
       <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
-        <Upload className="h-4 w-4 mr-1.5" />
-        Import CSV
+        <Upload className="h-3.5 w-3.5 mr-1.5" /> Import CSV
       </Button>
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent className="max-w-lg">
@@ -518,7 +504,7 @@ function CsvImportDialog({
             <DialogDescription>
               Your CSV must have an{" "}
               <code className="text-xs bg-gray-100 px-1 rounded">email</code>{" "}
-              column. Optional columns:{" "}
+              column. Optional:{" "}
               <code className="text-xs bg-gray-100 px-1 rounded">
                 firstName
               </code>
@@ -542,7 +528,7 @@ function CsvImportDialog({
             >
               <Upload className="mx-auto h-8 w-8 text-gray-400 mb-2" />
               <p className="text-sm font-medium text-gray-600">
-                {fileName || "Click to upload CSV file"}
+                {fileName || "Click to upload CSV"}
               </p>
               <p className="text-xs text-gray-400 mt-1">Supports .csv files</p>
               <input
@@ -553,13 +539,12 @@ function CsvImportDialog({
                 onChange={handleFile}
               />
             </div>
-
             {parsed.length > 0 && (
-              <div className="p-3 bg-green-50 border border-green-200 rounded-lg">
-                <p className="text-sm font-medium text-green-700">
+              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl">
+                <p className="text-sm font-semibold text-emerald-700">
                   ✓ {parsed.length} valid contacts found
                 </p>
-                <p className="text-xs text-green-600 mt-0.5">
+                <p className="text-xs text-emerald-600 mt-0.5">
                   Preview:{" "}
                   {parsed
                     .slice(0, 3)
@@ -640,17 +625,13 @@ export function ContactListDetail({
     setSearch(searchInput);
     fetchContacts(1, searchInput);
   };
-
-  const handlePageChange = (page: number) => {
-    fetchContacts(page, search);
-  };
+  const handlePageChange = (page: number) => fetchContacts(page, search);
 
   const toggleSelect = (id: string) => {
     const next = new Set(selectedIds);
     next.has(id) ? next.delete(id) : next.add(id);
     setSelectedIds(next);
   };
-
   const toggleSelectAll = () => {
     if (isAllSelected) setSelectedIds(new Set());
     else setSelectedIds(new Set(contacts.map((c) => c.id)));
@@ -667,21 +648,12 @@ export function ContactListDetail({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Delete failed");
-      toast("Success", {
-        description: (
-          <span className="!text-green-600">
-            Removed {selectedIds.size} contact
-            {selectedIds.size !== 1 ? "s" : ""}.
-          </span>
-        ),
-      });
+      toast.success(
+        `Removed ${selectedIds.size} contact${selectedIds.size !== 1 ? "s" : ""}.`,
+      );
       fetchContacts(currentPage, search);
-    } catch (err) {
-      toast("Error", {
-        description: (
-          <span className="!text-red-500">Failed to delete contacts.</span>
-        ),
-      });
+    } catch {
+      toast.error("Failed to delete contacts.");
     } finally {
       setIsDeleting(false);
     }
@@ -720,7 +692,6 @@ export function ContactListDetail({
     URL.revokeObjectURL(url);
   };
 
-  // Stats
   const subscribedCount = contacts.filter(
     (c) => c.isSubscribed && !c.isBounced && !c.isComplained,
   ).length;
@@ -729,126 +700,180 @@ export function ContactListDetail({
 
   return (
     <div className="space-y-6">
-      {/* ── Header ──────────────────────────────────────────────────────── */}
-      <div className="flex items-center gap-3 flex-wrap">
-        <Button variant="outline" size="sm" asChild>
-          <Link href="/contact-lists">
-            <ArrowLeft className="h-4 w-4 mr-1.5" />
-            Back to Lists
-          </Link>
-        </Button>
-        <div className="flex-1 min-w-0">
-          <h1 className="text-xl font-semibold text-gray-900 truncate">
-            {list.name}
-          </h1>
-          {list.description && (
-            <p className="text-sm text-gray-500">{list.description}</p>
-          )}
+      {/* ── Header ────────────────────────────────────────────────────── */}
+      <div className="flex items-start justify-between flex-wrap gap-4">
+        <div className="flex items-center gap-3 flex-wrap">
+          <Button variant="outline" size="sm" asChild className="shrink-0">
+            <Link href="/contact-lists">
+              <ArrowLeft className="h-3.5 w-3.5 mr-1.5" />
+              Back
+            </Link>
+          </Button>
+          <div className="min-w-0">
+            <h1 className="text-2xl font-bold text-gray-900 truncate">
+              {list.name}
+            </h1>
+            <div className="flex items-center gap-3 mt-0.5">
+              {list.description && (
+                <p className="text-sm text-gray-500">{list.description}</p>
+              )}
+              <span className="text-xs text-gray-400 flex items-center gap-1">
+                <Globe className="h-3 w-3" /> {list.domain.domain}
+              </span>
+              <span className="text-xs text-gray-400">
+                {list._count.emailHistory} campaign
+                {list._count.emailHistory !== 1 ? "s" : ""}
+              </span>
+            </div>
+          </div>
         </div>
-        <Button asChild size="sm">
+        <Button size="sm" asChild className="shrink-0">
           <Link href={`/send-email?listId=${list.id}`}>
-            <Send className="h-4 w-4 mr-1.5" />
-            Send Email
+            <Send className="h-3.5 w-3.5 mr-1.5" />
+            Send Campaign
           </Link>
         </Button>
       </div>
 
-      {/* ── Stats ───────────────────────────────────────────────────────── */}
+      {/* ── Stats ─────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
           {
             label: "Total Contacts",
             value: total,
             icon: Users,
-            bg: "bg-blue-50",
-            text: "text-blue-700",
-            border: "border-blue-200",
+            gradient: "from-blue-600 to-blue-800",
+            iconBg: "bg-blue-500/30",
           },
           {
             label: "Subscribed",
             value: subscribedCount,
             icon: UserCheck,
-            bg: "bg-green-50",
-            text: "text-green-700",
-            border: "border-green-200",
+            gradient: "from-emerald-600 to-emerald-800",
+            iconBg: "bg-emerald-500/30",
           },
           {
             label: "Unsubscribed",
             value: unsubscribedCount,
             icon: UserMinus,
-            bg: "bg-gray-50",
-            text: "text-gray-700",
-            border: "border-gray-200",
+            gradient: "from-gray-600 to-gray-800",
+            iconBg: "bg-gray-500/30",
           },
           {
             label: "Bounced",
             value: bouncedCount,
             icon: AlertCircle,
-            bg: "bg-orange-50",
-            text: "text-orange-700",
-            border: "border-orange-200",
+            gradient: "from-orange-600 to-orange-800",
+            iconBg: "bg-orange-500/30",
           },
-        ].map((stat) => (
+        ].map(({ label, value, icon: Icon, gradient, iconBg }) => (
           <div
-            key={stat.label}
-            className={`${stat.bg} border ${stat.border} rounded-xl p-4 flex items-center gap-3`}
+            key={label}
+            className={`relative overflow-hidden rounded-2xl p-4 text-white bg-gradient-to-br ${gradient}`}
           >
-            <stat.icon className={`h-8 w-8 ${stat.text} shrink-0`} />
-            <div>
-              <p className={`text-2xl font-bold ${stat.text}`}>{stat.value}</p>
-              <p className={`text-xs ${stat.text} font-medium`}>{stat.label}</p>
+            <div className="flex items-start justify-between">
+              <div>
+                <p className="text-[10px] font-semibold opacity-75 uppercase tracking-wider mb-1">
+                  {label}
+                </p>
+                <p className="text-2xl font-bold">{value.toLocaleString()}</p>
+              </div>
+              <div className={`p-2 rounded-xl ${iconBg}`}>
+                <Icon className="h-4 w-4 text-white" />
+              </div>
             </div>
+            <div className="absolute -bottom-5 -right-5 w-24 h-24 rounded-full border-8 border-white/5" />
           </div>
         ))}
       </div>
 
-      {/* ── Toolbar ─────────────────────────────────────────────────────── */}
-      <Card>
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between flex-wrap gap-3">
-            <CardTitle className="text-base">Contacts</CardTitle>
-            <div className="flex items-center gap-2 flex-wrap">
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={handleExportCSV}
-                disabled={contacts.length === 0}
-              >
-                <Download className="h-4 w-4 mr-1.5" />
-                Export CSV
-              </Button>
-              <CsvImportDialog
-                listId={list.id}
-                onSuccess={() => fetchContacts(1, search)}
-              />
-              <AddContactDialog
-                listId={list.id}
-                onSuccess={() => fetchContacts(1, search)}
-              />
+      {/* ── Contacts Table ────────────────────────────────────────────── */}
+      <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
+        {/* Toolbar */}
+        <div className="flex items-center justify-between flex-wrap gap-3 px-5 py-4 border-b border-gray-100">
+          <div className="flex items-center gap-2">
+            <div className="h-7 w-7 rounded-lg bg-indigo-50 border border-indigo-100 flex items-center justify-center">
+              <Users className="h-3.5 w-3.5 text-indigo-600" />
             </div>
+            <span className="font-bold text-gray-900 text-sm">Contacts</span>
+            <span className="text-xs text-gray-400 bg-gray-100 px-2 py-0.5 rounded-full">
+              {total.toLocaleString()} total
+            </span>
           </div>
-        </CardHeader>
+          <div className="flex items-center gap-2">
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleExportCSV}
+              disabled={contacts.length === 0}
+            >
+              <Download className="h-3.5 w-3.5 mr-1.5" /> Export CSV
+            </Button>
+            <CsvImportDialog
+              listId={list.id}
+              onSuccess={() => fetchContacts(1, search)}
+            />
+            <AddContactDialog
+              listId={list.id}
+              onSuccess={() => fetchContacts(1, search)}
+            />
+          </div>
+        </div>
 
-        <CardContent className="space-y-4">
-          {/* Search + bulk actions */}
-          <div className="flex items-center gap-3 flex-wrap">
-            <div className="relative flex-1 min-w-[200px]">
-              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+        {/* Search + bulk actions */}
+        <div className="flex items-center gap-3 flex-wrap px-5 py-3 border-b border-gray-50">
+          <div className="flex items-center gap-2 shrink-0">
+            <Checkbox
+              checked={isAllSelected}
+              onCheckedChange={toggleSelectAll}
+              id="select-all"
+            />
+            <label
+              htmlFor="select-all"
+              className="text-xs text-gray-500 cursor-pointer select-none"
+            >
+              Select all ({contacts.length})
+            </label>
+          </div>
+          {selectedIds.size > 0 && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold text-blue-700 bg-blue-50 border border-blue-200 px-2 py-0.5 rounded-full">
+                {selectedIds.size} selected
+              </span>
+              <Button
+                variant="destructive"
+                size="sm"
+                onClick={handleBulkDelete}
+                disabled={isDeleting}
+              >
+                <Trash2 className="h-3.5 w-3.5 mr-1.5" /> Remove selected
+              </Button>
+            </div>
+          )}
+          <div className="flex items-center gap-2 ml-auto">
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-gray-400" />
               <Input
-                placeholder="Search by name, email, company..."
-                className="pl-10"
+                placeholder="Search contacts…"
                 value={searchInput}
                 onChange={(e) => setSearchInput(e.target.value)}
                 onKeyDown={(e) => e.key === "Enter" && handleSearch()}
+                className="pl-9 h-8 text-sm w-56 rounded-lg"
               />
             </div>
-            <Button variant="outline" size="sm" onClick={handleSearch}>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleSearch}
+              className="h-8"
+            >
               Search
             </Button>
             {search && (
               <Button
                 variant="ghost"
                 size="sm"
+                className="h-8"
                 onClick={() => {
                   setSearch("");
                   setSearchInput("");
@@ -858,188 +883,153 @@ export function ContactListDetail({
                 Clear
               </Button>
             )}
-            {selectedIds.size > 0 && (
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={handleBulkDelete}
-                disabled={isDeleting}
-              >
-                <Trash2 className="h-4 w-4 mr-1.5" />
-                Remove {selectedIds.size} selected
-              </Button>
-            )}
           </div>
+        </div>
 
-          {/* Select all row */}
-          {contacts.length > 0 && (
-            <div className="flex items-center gap-2 pb-1">
-              <Checkbox
-                checked={isAllSelected}
-                onCheckedChange={toggleSelectAll}
-                id="select-all-contacts"
-              />
-              <label
-                htmlFor="select-all-contacts"
-                className="text-sm text-gray-500 cursor-pointer select-none"
-              >
-                Select all on this page ({contacts.length})
-              </label>
+        {/* Table */}
+        {contacts.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-center">
+            <div className="h-12 w-12 rounded-2xl bg-gray-100 flex items-center justify-center mb-3">
+              <Users className="h-5 w-5 text-gray-400" />
             </div>
-          )}
-
-          {/* Table */}
-          {contacts.length === 0 ? (
-            <div className="text-center py-10">
-              <Users className="mx-auto h-10 w-10 text-gray-300 mb-3" />
-              <p className="text-sm font-medium text-gray-600">
-                No contacts found
-              </p>
-              <p className="text-xs text-gray-400 mt-1">
-                {search
-                  ? "Try adjusting your search"
-                  : "Add contacts or import a CSV to get started"}
-              </p>
+            <p className="text-sm font-semibold text-gray-700">
+              No contacts found
+            </p>
+            <p className="text-xs text-gray-400 mt-1">
+              {search
+                ? "Try adjusting your search"
+                : "Add contacts or import a CSV to get started"}
+            </p>
+          </div>
+        ) : (
+          <div>
+            {/* Table header */}
+            <div className="grid grid-cols-[auto_1fr_150px_140px_100px_72px] gap-3 px-5 py-2.5 bg-gray-50 border-b border-gray-100 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+              <div />
+              <div>Contact</div>
+              <div>Company</div>
+              <div>Phone</div>
+              <div>Status</div>
+              <div>Actions</div>
             </div>
-          ) : (
-            <div className="border border-gray-200 rounded-xl overflow-hidden">
-              {/* Table header */}
-              <div className="grid grid-cols-[auto_1fr_150px_150px_100px_80px] gap-3 px-4 py-2.5 bg-gray-50 border-b border-gray-200 text-xs font-medium text-gray-500 uppercase tracking-wide">
-                <div />
-                <div>Contact</div>
-                <div>Company</div>
-                <div>Phone</div>
-                <div>Status</div>
-                <div>Actions</div>
-              </div>
 
-              {/* Rows */}
-              <div className="divide-y divide-gray-100">
-                {contacts.map((contact) => (
-                  <div
-                    key={contact.id}
-                    className={`grid grid-cols-[auto_1fr_150px_150px_100px_80px] gap-3 px-4 py-3 items-center hover:bg-gray-50 transition-colors ${
-                      selectedIds.has(contact.id) ? "bg-blue-50" : ""
-                    }`}
-                  >
-                    <Checkbox
-                      checked={selectedIds.has(contact.id)}
-                      onCheckedChange={() => toggleSelect(contact.id)}
-                    />
+            {/* Rows */}
+            <div className="divide-y divide-gray-50">
+              {contacts.map((contact) => (
+                <div
+                  key={contact.id}
+                  className={`grid grid-cols-[auto_1fr_150px_140px_100px_72px] gap-3 px-5 py-3 items-center hover:bg-gray-50/50 transition-colors ${selectedIds.has(contact.id) ? "bg-blue-50/40" : ""}`}
+                >
+                  <Checkbox
+                    checked={selectedIds.has(contact.id)}
+                    onCheckedChange={() => toggleSelect(contact.id)}
+                  />
 
-                    <div className="min-w-0">
-                      <p className="text-sm font-medium text-gray-900 truncate">
-                        {[contact.firstName, contact.lastName]
-                          .filter(Boolean)
-                          .join(" ") || (
-                          <span className="text-gray-400 italic">No name</span>
-                        )}
-                      </p>
-                      <p className="text-xs text-gray-500 truncate flex items-center gap-1">
-                        <Mail className="h-3 w-3 shrink-0" />
-                        {contact.email}
-                      </p>
-                    </div>
-
-                    <div className="text-xs text-gray-600 truncate">
-                      {contact.company ? (
-                        <span className="flex items-center gap-1">
-                          <Building2 className="h-3 w-3 shrink-0 text-gray-400" />
-                          {contact.company}
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-gray-900 truncate">
+                      {[contact.firstName, contact.lastName]
+                        .filter(Boolean)
+                        .join(" ") || (
+                        <span className="text-gray-400 font-normal italic text-xs">
+                          No name
                         </span>
-                      ) : (
-                        <span className="text-gray-300">—</span>
                       )}
-                    </div>
-
-                    <div className="text-xs text-gray-600 truncate">
-                      {contact.phone ? (
-                        <span className="flex items-center gap-1">
-                          <Phone className="h-3 w-3 shrink-0 text-gray-400" />
-                          {contact.phone}
-                        </span>
-                      ) : (
-                        <span className="text-gray-300">—</span>
-                      )}
-                    </div>
-
-                    <div>{getStatusBadge(contact)}</div>
-
-                    <div className="flex items-center gap-0.5">
-                      <EditContactDialog
-                        listId={list.id}
-                        contact={contact}
-                        onSuccess={() => fetchContacts(currentPage, search)}
-                      />
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        className="h-7 w-7 p-0 text-red-500 hover:text-red-700 hover:bg-red-50"
-                        onClick={async () => {
-                          const res = await fetch(
-                            `/api/contact-lists/${list.id}/contacts`,
-                            {
-                              method: "DELETE",
-                              headers: { "Content-Type": "application/json" },
-                              body: JSON.stringify({
-                                contactIds: [contact.id],
-                              }),
-                            },
-                          );
-                          if (res.ok) {
-                            toast("Success", {
-                              description: (
-                                <span className="!text-green-600">
-                                  Contact removed.
-                                </span>
-                              ),
-                            });
-                            fetchContacts(currentPage, search);
-                          }
-                        }}
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
+                    </p>
+                    <p className="text-xs text-gray-400 truncate flex items-center gap-1 mt-0.5">
+                      <Mail className="h-2.5 w-2.5 shrink-0" />
+                      {contact.email}
+                    </p>
                   </div>
-                ))}
-              </div>
-            </div>
-          )}
 
-          {/* Pagination */}
-          {totalPages > 1 && (
-            <div className="flex items-center justify-between pt-2">
-              <p className="text-sm text-gray-500">
-                Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1}–
-                {Math.min(currentPage * ITEMS_PER_PAGE, total)} of {total}{" "}
-                contacts
-              </p>
-              <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handlePageChange(currentPage - 1)}
-                  disabled={currentPage <= 1}
-                >
-                  <ChevronLeft className="h-4 w-4" />
-                </Button>
-                <span className="text-sm text-gray-600">
-                  {currentPage} / {totalPages}
-                </span>
-                <Button
-                  variant="outline"
-                  size="sm"
-                  onClick={() => handlePageChange(currentPage + 1)}
-                  disabled={currentPage >= totalPages}
-                >
-                  <ChevronRight className="h-4 w-4" />
-                </Button>
-              </div>
+                  <div className="text-xs text-gray-600 truncate">
+                    {contact.company ? (
+                      <span className="flex items-center gap-1">
+                        <Building2 className="h-3 w-3 shrink-0 text-gray-300" />
+                        {contact.company}
+                      </span>
+                    ) : (
+                      <span className="text-gray-300">—</span>
+                    )}
+                  </div>
+
+                  <div className="text-xs text-gray-600 truncate">
+                    {contact.phone ? (
+                      <span className="flex items-center gap-1">
+                        <Phone className="h-3 w-3 shrink-0 text-gray-300" />
+                        {contact.phone}
+                      </span>
+                    ) : (
+                      <span className="text-gray-300">—</span>
+                    )}
+                  </div>
+
+                  <div>{getStatusBadge(contact)}</div>
+
+                  <div className="flex items-center gap-0.5">
+                    <EditContactDialog
+                      listId={list.id}
+                      contact={contact}
+                      onSuccess={() => fetchContacts(currentPage, search)}
+                    />
+                    <button
+                      className="p-1.5 rounded-lg text-gray-300 hover:text-red-600 hover:bg-red-50 transition-colors"
+                      title="Remove contact"
+                      onClick={async () => {
+                        const res = await fetch(
+                          `/api/contact-lists/${list.id}/contacts`,
+                          {
+                            method: "DELETE",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify({ contactIds: [contact.id] }),
+                          },
+                        );
+                        if (res.ok) {
+                          toast.success("Contact removed.");
+                          fetchContacts(currentPage, search);
+                        }
+                      }}
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              ))}
             </div>
-          )}
-        </CardContent>
-      </Card>
+          </div>
+        )}
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between px-5 py-4 border-t border-gray-100">
+            <p className="text-xs text-gray-500">
+              Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1}–
+              {Math.min(currentPage * ITEMS_PER_PAGE, total)} of{" "}
+              {total.toLocaleString()} contacts
+            </p>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handlePageChange(currentPage - 1)}
+                disabled={currentPage <= 1}
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <span className="text-xs font-medium text-gray-600 tabular-nums">
+                {currentPage} / {totalPages}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => handlePageChange(currentPage + 1)}
+                disabled={currentPage >= totalPages}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
