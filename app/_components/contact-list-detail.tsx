@@ -24,6 +24,7 @@ import {
   SelectValue,
 } from "@/app/_components/ui/select";
 import { Alert, AlertDescription } from "@/app/_components/ui/alert";
+import { Progress } from "@/app/_components/ui/progress";
 import { toast } from "sonner";
 import {
   ArrowLeft,
@@ -44,6 +45,9 @@ import {
   Building2,
   Phone,
   Globe,
+  Layers,
+  CheckCircle2,
+  AlertTriangle,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -65,6 +69,8 @@ interface ContactList {
   id: string;
   name: string;
   description?: string | null;
+  // domainId is needed for creating overflow lists
+  domainId: string;
   domain: { domain: string };
   _count: { contacts: number; emailHistory: number };
 }
@@ -78,6 +84,58 @@ interface ContactListDetailProps {
 }
 
 const ITEMS_PER_PAGE = 50;
+const MAX_CONTACTS = 100;
+
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
+const ADJECTIVES = [
+  "Alpha",
+  "Bravo",
+  "Cedar",
+  "Delta",
+  "Echo",
+  "Foxtrot",
+  "Golden",
+  "Harbor",
+  "Indigo",
+  "Jade",
+  "Kilo",
+  "Lunar",
+  "Maple",
+  "Noble",
+  "Ocean",
+  "Prime",
+];
+const NOUNS = [
+  "Batch",
+  "Crew",
+  "Draft",
+  "Edge",
+  "Fleet",
+  "Group",
+  "Hub",
+  "Index",
+  "Jet",
+  "Keystone",
+  "Layer",
+  "Matrix",
+  "Node",
+  "Orbit",
+  "Pack",
+  "Queue",
+];
+const generateBaseName = () => {
+  const adj = ADJECTIVES[Math.floor(Math.random() * ADJECTIVES.length)];
+  const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
+  return `${adj} ${noun}`;
+};
+
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < arr.length; i += size)
+    chunks.push(arr.slice(i, i + size));
+  return chunks;
+}
 
 // ── Status Badge ──────────────────────────────────────────────────────────────
 
@@ -399,21 +457,48 @@ function EditContactDialog({
   );
 }
 
-// ── CSV Import Dialog ─────────────────────────────────────────────────────────
+// ── CSV Import Dialog — with overflow splitting ───────────────────────────────
+
+interface OverflowList {
+  id: string;
+  name: string;
+  count: number;
+}
+interface ImportProgress {
+  status: "idle" | "running" | "done" | "error";
+  totalContacts: number;
+  savedContacts: number;
+  currentStep: string;
+  overflowLists: OverflowList[];
+  error?: string;
+}
 
 function CsvImportDialog({
   listId,
+  listName,
+  domainId,
+  currentCount,
   onSuccess,
 }: {
   listId: string;
+  listName: string;
+  domainId: string;
+  currentCount: number;
   onSuccess: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const [parsed, setParsed] = useState<any[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [fileName, setFileName] = useState("");
+  const [progress, setProgress] = useState<ImportProgress | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+
+  const remaining = MAX_CONTACTS - currentCount;
+  const willOverflow = parsed.length > remaining;
+  const overflowCount = Math.max(0, parsed.length - remaining);
+  const newListsNeeded =
+    overflowCount > 0 ? Math.ceil(overflowCount / MAX_CONTACTS) : 0;
+  const totalLists = newListsNeeded + (remaining > 0 ? 1 : 0); // current list + new ones
 
   const parseCSV = (text: string) => {
     const lines = text.trim().split(/\r?\n/);
@@ -467,112 +552,317 @@ function CsvImportDialog({
 
   const handleImport = async () => {
     if (parsed.length === 0) return;
-    setIsLoading(true);
-    setError("");
+
+    const baseName = generateBaseName();
+    const prog: ImportProgress = {
+      status: "running",
+      totalContacts: parsed.length,
+      savedContacts: 0,
+      currentStep: "",
+      overflowLists: [],
+    };
+    setProgress({ ...prog });
+
     try {
-      const res = await fetch(`/api/contact-lists/${listId}/contacts`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ contacts: parsed }),
-      });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Import failed");
-      toast.success(
-        `Imported ${data.added} contacts${data.skipped > 0 ? ` (${data.skipped} skipped)` : ""}.`,
-      );
-      setOpen(false);
-      setParsed([]);
-      setFileName("");
-      if (fileRef.current) fileRef.current.value = "";
+      // ── Step 1: fill current list up to its remaining capacity ──────────
+      const batch1 = parsed.slice(0, remaining);
+      if (batch1.length > 0) {
+        prog.currentStep = `Adding ${batch1.length} contacts to "${listName}"…`;
+        setProgress({ ...prog });
+
+        const res = await fetch(`/api/contact-lists/${listId}/contacts`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ contacts: batch1 }),
+        });
+        const data = await res.json();
+        if (!res.ok)
+          throw new Error(data.error || "Failed to import into current list");
+        prog.savedContacts += batch1.length;
+        setProgress({ ...prog });
+      }
+
+      // ── Step 2: create new lists for overflow ──────────────────────────
+      const overflow = parsed.slice(remaining);
+      if (overflow.length > 0) {
+        const overflowBatches = chunkArray(overflow, MAX_CONTACTS);
+        for (let i = 0; i < overflowBatches.length; i++) {
+          const batch = overflowBatches[i];
+          const newName = `${baseName}-${i + 2}`;
+          prog.currentStep = `Creating new list "${newName}" (${batch.length} contacts)…`;
+          setProgress({ ...prog });
+
+          const res = await fetch("/api/contact-lists", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name: newName, domainId, contacts: batch }),
+          });
+          const data = await res.json();
+          if (!res.ok)
+            throw new Error(
+              data.error || `Failed to create overflow list ${i + 2}`,
+            );
+
+          prog.savedContacts += batch.length;
+          prog.overflowLists.push({
+            id: data.id,
+            name: newName,
+            count: batch.length,
+          });
+          setProgress({ ...prog });
+        }
+      }
+
+      prog.status = "done";
+      prog.currentStep = "All contacts imported!";
+      setProgress({ ...prog });
       onSuccess();
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Import failed");
-    } finally {
-      setIsLoading(false);
+      prog.status = "error";
+      prog.error = err instanceof Error ? err.message : "Import failed";
+      setProgress({ ...prog });
     }
   };
+
+  const reset = () => {
+    setOpen(false);
+    setParsed([]);
+    setFileName("");
+    setError("");
+    setProgress(null);
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
+  const pct = progress
+    ? Math.round((progress.savedContacts / progress.totalContacts) * 100)
+    : 0;
 
   return (
     <>
       <Button variant="outline" size="sm" onClick={() => setOpen(true)}>
         <Upload className="h-3.5 w-3.5 mr-1.5" /> Import CSV
       </Button>
-      <Dialog open={open} onOpenChange={setOpen}>
+      <Dialog
+        open={open}
+        onOpenChange={(v) => {
+          if (!v && progress?.status === "running") return;
+          if (!v) reset();
+          else setOpen(true);
+        }}
+      >
         <DialogContent className="max-w-lg">
           <DialogHeader>
-            <DialogTitle>Import Contacts from CSV</DialogTitle>
+            <DialogTitle>
+              {progress ? "Importing Contacts…" : "Import Contacts from CSV"}
+            </DialogTitle>
             <DialogDescription>
-              Your CSV must have an{" "}
-              <code className="text-xs bg-gray-100 px-1 rounded">email</code>{" "}
-              column. Optional:{" "}
-              <code className="text-xs bg-gray-100 px-1 rounded">
-                firstName
-              </code>
-              ,{" "}
-              <code className="text-xs bg-gray-100 px-1 rounded">lastName</code>
-              ,{" "}
-              <code className="text-xs bg-gray-100 px-1 rounded">company</code>,{" "}
-              <code className="text-xs bg-gray-100 px-1 rounded">phone</code>
+              {progress ? (
+                `${progress.savedContacts} of ${progress.totalContacts} contacts saved`
+              ) : (
+                <>
+                  Your CSV must have an{" "}
+                  <code className="text-xs bg-gray-100 px-1 rounded">
+                    email
+                  </code>{" "}
+                  column.
+                </>
+              )}
             </DialogDescription>
           </DialogHeader>
-          <div className="space-y-4 mt-2">
-            {error && (
-              <Alert variant="destructive">
-                <AlertCircle className="h-4 w-4" />
-                <AlertDescription>{error}</AlertDescription>
-              </Alert>
-            )}
-            <div
-              className="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/30 transition-all"
-              onClick={() => fileRef.current?.click()}
-            >
-              <Upload className="mx-auto h-8 w-8 text-gray-400 mb-2" />
-              <p className="text-sm font-medium text-gray-600">
-                {fileName || "Click to upload CSV"}
-              </p>
-              <p className="text-xs text-gray-400 mt-1">Supports .csv files</p>
-              <input
-                ref={fileRef}
-                type="file"
-                accept=".csv"
-                className="hidden"
-                onChange={handleFile}
-              />
-            </div>
-            {parsed.length > 0 && (
-              <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-xl">
-                <p className="text-sm font-semibold text-emerald-700">
-                  ✓ {parsed.length} valid contacts found
-                </p>
-                <p className="text-xs text-emerald-600 mt-0.5">
-                  Preview:{" "}
-                  {parsed
-                    .slice(0, 3)
-                    .map((c: any) => c.email)
-                    .join(", ")}
-                  {parsed.length > 3 ? ` +${parsed.length - 3} more` : ""}
-                </p>
+
+          {/* ── Progress view ───────────────────────────────────────────── */}
+          {progress ? (
+            <div className="space-y-4 mt-2">
+              {/* Progress bar */}
+              <div className="space-y-1.5">
+                <div className="flex justify-between text-xs text-gray-500">
+                  <span>{pct}% complete</span>
+                  <span>
+                    {progress.savedContacts} / {progress.totalContacts} contacts
+                  </span>
+                </div>
+                <Progress
+                  value={pct}
+                  className={`h-2 ${progress.status === "done" ? "[&>div]:bg-emerald-500" : "[&>div]:bg-blue-500 [&>div]:transition-all [&>div]:duration-300"}`}
+                />
               </div>
-            )}
-          </div>
-          <DialogFooter>
-            <Button
-              variant="outline"
-              onClick={() => {
-                setOpen(false);
-                setParsed([]);
-                setFileName("");
-              }}
-            >
-              Cancel
-            </Button>
-            <Button
-              onClick={handleImport}
-              disabled={isLoading || parsed.length === 0}
-            >
-              {isLoading ? "Importing..." : `Import ${parsed.length} Contacts`}
-            </Button>
-          </DialogFooter>
+
+              {/* Current step */}
+              {progress.status === "running" && (
+                <div className="flex items-center gap-2 text-xs text-gray-500">
+                  <div className="h-3.5 w-3.5 rounded-full border-2 border-blue-400 border-t-transparent animate-spin shrink-0" />
+                  {progress.currentStep}
+                </div>
+              )}
+
+              {/* Error */}
+              {progress.error && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>{progress.error}</AlertDescription>
+                </Alert>
+              )}
+
+              {/* New lists created */}
+              {progress.overflowLists.length > 0 && (
+                <div className="space-y-1.5">
+                  <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
+                    New Lists Created
+                  </p>
+                  <div className="space-y-1.5">
+                    {progress.overflowLists.map((l, i) => (
+                      <div
+                        key={l.id}
+                        className="flex items-center gap-3 p-2.5 bg-gray-50 border border-gray-100 rounded-xl"
+                      >
+                        <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-semibold text-gray-900 truncate">
+                            {l.name}
+                          </p>
+                          <p className="text-xs text-gray-400">
+                            {l.count} contacts
+                          </p>
+                        </div>
+                        <Badge className="bg-blue-50 text-blue-700 border border-blue-200 text-[10px]">
+                          Overflow {i + 1}
+                        </Badge>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {/* Done */}
+              {progress.status === "done" && (
+                <Alert className="border-emerald-200 bg-emerald-50">
+                  <CheckCircle2 className="h-4 w-4 text-emerald-600" />
+                  <AlertDescription className="text-emerald-800">
+                    <strong>Import complete!</strong> {progress.savedContacts}{" "}
+                    contacts saved
+                    {progress.overflowLists.length > 0 &&
+                      ` across ${progress.overflowLists.length + 1} lists`}
+                    .
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              <DialogFooter>
+                {progress.status === "done" || progress.status === "error" ? (
+                  <Button onClick={reset}>
+                    {progress.status === "done" ? "Close" : "Try Again"}
+                  </Button>
+                ) : (
+                  <p className="text-xs text-gray-400">
+                    Please keep this window open…
+                  </p>
+                )}
+              </DialogFooter>
+            </div>
+          ) : (
+            /* ── Normal upload view ─────────────────────────────────────── */
+            <div className="space-y-4 mt-2">
+              {error && (
+                <Alert variant="destructive">
+                  <AlertCircle className="h-4 w-4" />
+                  <AlertDescription>{error}</AlertDescription>
+                </Alert>
+              )}
+
+              {/* ── BIG OVERFLOW WARNING ──────────────────────────────── */}
+              {willOverflow && (
+                <Alert className="border-amber-300 bg-amber-50">
+                  <AlertTriangle className="h-4 w-4 text-amber-600" />
+                  <AlertDescription className="text-amber-900">
+                    <strong className="block mb-1">
+                      This list can only hold {remaining} more contacts.
+                    </strong>
+                    Your CSV has <strong>{parsed.length} contacts</strong> — the
+                    first <strong>{remaining}</strong> will be added to{" "}
+                    <em>"{listName}"</em>, and the remaining{" "}
+                    <strong>{overflowCount}</strong> will automatically be saved
+                    into{" "}
+                    <strong>
+                      {newListsNeeded} new list{newListsNeeded !== 1 ? "s" : ""}
+                    </strong>{" "}
+                    on the same domain. No contacts will be lost. You can rename
+                    the new lists afterwards from the contact lists page.
+                  </AlertDescription>
+                </Alert>
+              )}
+
+              {/* Drop zone */}
+              <div
+                className="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer hover:border-blue-400 hover:bg-blue-50/30 transition-all"
+                onClick={() => fileRef.current?.click()}
+              >
+                <Upload className="mx-auto h-8 w-8 text-gray-400 mb-2" />
+                <p className="text-sm font-medium text-gray-600">
+                  {fileName || "Click to upload CSV"}
+                </p>
+                <p className="text-xs text-gray-400 mt-1">
+                  Supports .csv files
+                </p>
+                {!fileName && remaining < MAX_CONTACTS && (
+                  <p className="text-xs text-amber-600 mt-1 flex items-center justify-center gap-1">
+                    <Layers className="h-3 w-3" /> Large CSVs auto-split into
+                    new lists
+                  </p>
+                )}
+                <input
+                  ref={fileRef}
+                  type="file"
+                  accept=".csv"
+                  className="hidden"
+                  onChange={handleFile}
+                />
+              </div>
+
+              {/* Parsed summary */}
+              {parsed.length > 0 && (
+                <div
+                  className={`p-3 rounded-xl border ${willOverflow ? "bg-blue-50 border-blue-200" : "bg-emerald-50 border-emerald-200"}`}
+                >
+                  <p
+                    className={`text-sm font-semibold ${willOverflow ? "text-blue-800" : "text-emerald-700"}`}
+                  >
+                    {willOverflow ? (
+                      <Layers className="inline h-3.5 w-3.5 mr-1" />
+                    ) : (
+                      "✓ "
+                    )}
+                    {parsed.length} valid contacts found
+                    {willOverflow &&
+                      ` → ${totalLists} list${totalLists !== 1 ? "s" : ""}`}
+                  </p>
+                  <p className="text-xs mt-0.5 text-gray-500">
+                    Preview:{" "}
+                    {parsed
+                      .slice(0, 3)
+                      .map((c: any) => c.email)
+                      .join(", ")}
+                    {parsed.length > 3 ? ` +${parsed.length - 3} more` : ""}
+                  </p>
+                </div>
+              )}
+
+              <DialogFooter>
+                <Button variant="outline" onClick={reset}>
+                  Cancel
+                </Button>
+                <Button onClick={handleImport} disabled={parsed.length === 0}>
+                  {willOverflow ? (
+                    <>
+                      <Layers className="mr-1.5 h-3.5 w-3.5" />
+                      Import {parsed.length} contacts ({totalLists} lists)
+                    </>
+                  ) : (
+                    `Import ${parsed.length} Contacts`
+                  )}
+                </Button>
+              </DialogFooter>
+            </div>
+          )}
         </DialogContent>
       </Dialog>
     </>
@@ -700,7 +990,7 @@ export function ContactListDetail({
 
   return (
     <div className="space-y-6">
-      {/* ── Header ────────────────────────────────────────────────────── */}
+      {/* ── Header ──────────────────────────────────────────────────────── */}
       <div className="flex items-start justify-between flex-wrap gap-4">
         <div className="flex items-center gap-3 flex-wrap">
           <Button variant="outline" size="sm" asChild className="shrink-0">
@@ -735,7 +1025,7 @@ export function ContactListDetail({
         </Button>
       </div>
 
-      {/* ── Stats ─────────────────────────────────────────────────────── */}
+      {/* ── Stats ───────────────────────────────────────────────────────── */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
           {
@@ -787,7 +1077,7 @@ export function ContactListDetail({
         ))}
       </div>
 
-      {/* ── Contacts Table ────────────────────────────────────────────── */}
+      {/* ── Contacts Table ──────────────────────────────────────────────── */}
       <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
         {/* Toolbar */}
         <div className="flex items-center justify-between flex-wrap gap-3 px-5 py-4 border-b border-gray-100">
@@ -811,7 +1101,13 @@ export function ContactListDetail({
             </Button>
             <CsvImportDialog
               listId={list.id}
-              onSuccess={() => fetchContacts(1, search)}
+              listName={list.name}
+              domainId={list.domainId}
+              currentCount={total}
+              onSuccess={() => {
+                fetchContacts(1, search);
+                router.refresh();
+              }}
             />
             <AddContactDialog
               listId={list.id}
@@ -903,7 +1199,6 @@ export function ContactListDetail({
           </div>
         ) : (
           <div>
-            {/* Table header */}
             <div className="grid grid-cols-[auto_1fr_150px_140px_100px_72px] gap-3 px-5 py-2.5 bg-gray-50 border-b border-gray-100 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
               <div />
               <div>Contact</div>
@@ -912,8 +1207,6 @@ export function ContactListDetail({
               <div>Status</div>
               <div>Actions</div>
             </div>
-
-            {/* Rows */}
             <div className="divide-y divide-gray-50">
               {contacts.map((contact) => (
                 <div
@@ -924,7 +1217,6 @@ export function ContactListDetail({
                     checked={selectedIds.has(contact.id)}
                     onCheckedChange={() => toggleSelect(contact.id)}
                   />
-
                   <div className="min-w-0">
                     <p className="text-sm font-semibold text-gray-900 truncate">
                       {[contact.firstName, contact.lastName]
@@ -940,7 +1232,6 @@ export function ContactListDetail({
                       {contact.email}
                     </p>
                   </div>
-
                   <div className="text-xs text-gray-600 truncate">
                     {contact.company ? (
                       <span className="flex items-center gap-1">
@@ -951,7 +1242,6 @@ export function ContactListDetail({
                       <span className="text-gray-300">—</span>
                     )}
                   </div>
-
                   <div className="text-xs text-gray-600 truncate">
                     {contact.phone ? (
                       <span className="flex items-center gap-1">
@@ -962,9 +1252,7 @@ export function ContactListDetail({
                       <span className="text-gray-300">—</span>
                     )}
                   </div>
-
                   <div>{getStatusBadge(contact)}</div>
-
                   <div className="flex items-center gap-0.5">
                     <EditContactDialog
                       listId={list.id}

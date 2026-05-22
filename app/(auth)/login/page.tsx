@@ -94,7 +94,7 @@ export default function LoginPage() {
               icon: Sparkles,
               label: "Visual email builder — drag & drop blocks",
             },
-            { icon: Zap, label: "Batch sends via Resend with tracking" },
+            { icon: Zap, label: "Batch sends via system with tracking" },
             { icon: Shield, label: "SPF/DKIM domain verification built-in" },
           ].map(({ icon: Icon, label }) => (
             <div key={label} className="flex items-center gap-3">

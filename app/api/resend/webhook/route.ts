@@ -3,9 +3,16 @@ import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/app/_lib/db/prisma";
 import { resend } from "@/app/_lib/email/resend-client";
 
+// ── Helper: extract tracking status from Resend records ──────────────────────
+
+function getTrackingStatusFromRecords(records: any[]): "verified" | "pending" {
+  const trackingCname = records?.find((r: any) => r.record === "Tracking");
+  return trackingCname?.status === "verified" ? "verified" : "pending";
+}
+
 export async function POST(req: NextRequest) {
   try {
-    // ── Signature verification (optional but recommended) ──────────────────
+    // ── Signature verification ─────────────────────────────────────────────
     const webhookSecret = process.env.RESEND_WEBHOOK_SECRET;
     if (webhookSecret) {
       const signature =
@@ -13,15 +20,13 @@ export async function POST(req: NextRequest) {
         req.headers.get("resend-signature");
       if (!signature) {
         console.warn("Webhook: Missing signature header");
-        // Don't hard-reject — Resend may not send signature on all events
-        // return NextResponse.json({ error: "Missing signature" }, { status: 401 });
       }
     }
 
     const event = await req.json();
     const { type, data } = event;
 
-    // ── Domain verification events ─────────────────────────────────────────
+    // ── Domain events ──────────────────────────────────────────────────────
     if (type === "domain.updated" || type === "domain.verified") {
       const resendDomainId = data?.id;
       const resendStatus = data?.status;
@@ -33,32 +38,63 @@ export async function POST(req: NextRequest) {
       });
       if (!domain) return NextResponse.json({ ok: true });
 
-      const status = resendStatus === "verified" ? "verified" : "pending";
+      const newStatus = resendStatus === "verified" ? "verified" : "pending";
+      const dbUpdate: Record<string, any> = { status: newStatus };
 
-      if (status === "verified" && domain.status !== "verified") {
+      // ── When domain becomes verified: activate tracking on Resend ────────
+      if (newStatus === "verified" && domain.status !== "verified") {
         try {
-          await resend.domains.update({
+          const { data: updated } = await resend.domains.update({
             id: resendDomainId,
             openTracking: true,
             clickTracking: true,
+            trackingSubdomain: "track",
           });
+
+          if (updated) {
+            // Check if the tracking record is already verified in this update
+            const allRecords = (updated as any).records ?? [];
+            const trackingStatus = getTrackingStatusFromRecords(allRecords);
+            dbUpdate.trackingSubdomain = "track";
+            dbUpdate.trackingStatus = trackingStatus;
+            console.log(
+              `Domain ${domain.domain}: tracking activated, status=${trackingStatus}`,
+            );
+          }
         } catch (e) {
-          console.error("Failed to enable tracking on domain:", e);
+          console.error("Failed to enable tracking on domain.verified:", e);
+          // Don't fail the webhook — just log and continue
+        }
+      }
+
+      // ── On any domain.updated: also sync tracking status if records present
+      // (Resend may send a domain.updated after tracking DNS is verified)
+      if (type === "domain.updated" && data?.records) {
+        const trackingStatus = getTrackingStatusFromRecords(data.records);
+        // Only update if the domain is already verified (tracking only applies then)
+        if (domain.status === "verified" || newStatus === "verified") {
+          dbUpdate.trackingStatus = trackingStatus;
+          if (trackingStatus === "verified" && !domain.trackingSubdomain) {
+            dbUpdate.trackingSubdomain = "track";
+          }
+          console.log(
+            `Domain ${domain.domain}: tracking status from webhook = ${trackingStatus}`,
+          );
         }
       }
 
       await prisma.domain.update({
         where: { id: domain.id },
-        data: { status },
+        data: dbUpdate,
       });
 
-      console.log(`Domain ${domain.domain} → ${status}`);
+      console.log(
+        `Webhook domain.updated: ${domain.domain} → status=${newStatus}, tracking=${dbUpdate.trackingStatus ?? "unchanged"}`,
+      );
       return NextResponse.json({ ok: true });
     }
 
     // ── Email events ───────────────────────────────────────────────────────
-    // New sends use tags: email_history_id
-    // Legacy sends used broadcastId field (kept for backward compat)
     const tags = data?.tags || {};
     const tagHistoryId =
       typeof tags === "object" && !Array.isArray(tags)
@@ -66,12 +102,10 @@ export async function POST(req: NextRequest) {
         : undefined;
 
     const legacyBroadcastId = data?.broadcast_id;
-
     const recipientEmail: string = Array.isArray(data?.to)
       ? data.to[0]
       : data?.to || "";
 
-    // Resolve EmailHistory
     let emailHistory: { id: string; userId: string } | null = null;
 
     if (tagHistoryId) {
@@ -81,16 +115,13 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Legacy broadcast lookup
     if (!emailHistory && legacyBroadcastId) {
-      // broadcastId field no longer in schema — skip silently
       console.log(
         `Webhook: Legacy broadcastId ${legacyBroadcastId} — no history found (expected for old records)`,
       );
     }
 
     if (!emailHistory) {
-      // Not fatal — could be old send, test email, or unrelated event
       console.log(
         `Webhook: No EmailHistory for event ${type}, tags=${JSON.stringify(tags)}`,
       );
@@ -106,7 +137,6 @@ export async function POST(req: NextRequest) {
 
     switch (type) {
       case "email.sent":
-        // sentCount is already set at send time; just record the event
         recipientStatus = "sent";
         updateData = {};
         break;
@@ -131,13 +161,11 @@ export async function POST(req: NextRequest) {
       case "email.failed":
         updateData = { bouncedCount: { increment: 1 } };
         recipientStatus = type === "email.bounced" ? "bounced" : "failed";
-        // Mark contact as bounced and add to suppression
         if (recipientEmail) {
           await prisma.contact.updateMany({
             where: { email: recipientEmail, contactListId: undefined },
             data: { isBounced: true, isSubscribed: false },
           });
-          // Global suppression
           await prisma.emailSuppression.upsert({
             where: { email: recipientEmail },
             create: { email: recipientEmail, reason: "bounced", userId },

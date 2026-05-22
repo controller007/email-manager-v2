@@ -1,6 +1,7 @@
 import { getServerSession } from "next-auth"
 import { redirect } from "next/navigation"
 import { authOptions } from "./handler"
+import { revalidatePath } from "next/cache"
 
 export async function getSession() {
   return await getServerSession(authOptions)
@@ -16,5 +17,6 @@ export async function requireAuth() {
   if (!session?.user) {
     redirect("/login")
   }
+  revalidatePath("/")
   return session.user
 }

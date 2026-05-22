@@ -1,4 +1,4 @@
-BUNDLED API CONTEXT - 5/20/2026, 1:56:55 AM
+BUNDLED API CONTEXT - 5/21/2026, 11:59:32 PM
 TOTAL FILES: 102
 
 
@@ -1135,15 +1135,13 @@ export default async function ContactListDetailPage({
   const totalPages = Math.ceil(total / ITEMS_PER_PAGE);
 
   return (
-    <DashboardLayout>
-      <ContactListDetail
-        list={list as any}
-        initialContacts={contacts as any}
-        initialTotal={total}
-        initialPage={page}
-        initialTotalPages={totalPages}
-      />
-    </DashboardLayout>
+    <ContactListDetail
+      list={list as any}
+      initialContacts={contacts as any}
+      initialTotal={total}
+      initialPage={page}
+      initialTotalPages={totalPages}
+    />
   );
 }
 
@@ -2532,9 +2530,7 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <Suspense>
       <DashboardLayout>{children}</DashboardLayout>
-    </Suspense>
   );
 }
 
@@ -2585,7 +2581,13 @@ async function getSenders(userId: string) {
   });
 }
 
-export default async function SendEmailPage() {
+export default async function SendEmailPage({
+  searchParams,
+}: {
+  searchParams: { listId?: string };
+}) {
+
+  
   const user = await requireAuth();
   const [contactLists, senders] = await Promise.all([
     getContactLists(user.id),
@@ -2648,6 +2650,7 @@ export default async function SendEmailPage() {
         <EmailComposer
           contactLists={contactLists as any}
           senders={senders as any}
+          initialListId={searchParams.listId}
         />
       ) : (
         /* ── Setup Required ─────────────────────────────────────────── */
@@ -5411,12 +5414,12 @@ export function DeleteContactListDialog({ children, contactList }: DeleteContact
 ############################################################
 
 ```tsx
-"use client"
+"use client";
 
-import { useState } from "react"
-import { Copy, Check, ExternalLink } from "lucide-react"
-import { Button } from "@/app/_components/ui/button"
-import { Alert, AlertDescription } from "@/app/_components/ui/alert"
+import { useState } from "react";
+import { Copy, Check, ExternalLink, Shield } from "lucide-react";
+import { Button } from "@/app/_components/ui/button";
+import { Alert, AlertDescription } from "@/app/_components/ui/alert";
 import {
   Table,
   TableBody,
@@ -5424,28 +5427,39 @@ import {
   TableHead,
   TableHeader,
   TableRow,
-} from "@/app/_components/ui/table"
+} from "@/app/_components/ui/table";
 
 interface DnsRecordsDisplayProps {
-  records: any[]
-  domain: string
-  domainId: string
-  onClose: () => void
+  records: any[];
+  domain: string;
+  domainId: string;
+  onClose: () => void;
 }
 
-export function DnsRecordsDisplay({ 
-  records, 
+export function DnsRecordsDisplay({
+  records,
   domain,
   domainId,
-  onClose 
+  onClose,
 }: DnsRecordsDisplayProps) {
-  const [copiedField, setCopiedField] = useState("")
+  const [copiedField, setCopiedField] = useState("");
 
   const copyToClipboard = (text: string, field: string) => {
-    navigator.clipboard.writeText(text)
-    setCopiedField(field)
-    setTimeout(() => setCopiedField(""), 2000)
-  }
+    navigator.clipboard.writeText(text);
+    setCopiedField(field);
+    setTimeout(() => setCopiedField(""), 2000);
+  };
+
+  // Append DMARC record — Resend doesn't provide this but it's required by
+  // Gmail, Yahoo, and Microsoft for bulk senders. Built from the domain name.
+  const dmarcRecord = {
+    type: "TXT",
+    name: `_dmarc`,
+    value: `v=DMARC1; p=none; rua=mailto:dmarc@${domain}`,
+    isDmarc: true,
+  };
+
+  const allRecords = [...records, dmarcRecord];
 
   return (
     <div className="space-y-4">
@@ -5473,10 +5487,22 @@ export function DnsRecordsDisplay({
             </TableRow>
           </TableHeader>
           <TableBody>
-            {records.map((record, index) => (
-              <TableRow key={index}>
+            {allRecords.map((record, index) => (
+              <TableRow
+                key={index}
+                className={
+                  record.isDmarc
+                    ? "bg-amber-50 border-l-2 border-l-amber-400"
+                    : ""
+                }
+              >
                 <TableCell className="font-mono text-sm">
                   {record.type}
+                  {record.isDmarc && (
+                    <span className="ml-1.5 inline-flex items-center gap-1 text-[10px] font-semibold text-amber-700 bg-amber-100 px-1.5 py-0.5 rounded-full">
+                      <Shield className="h-2.5 w-2.5" /> DMARC
+                    </span>
+                  )}
                 </TableCell>
                 <TableCell className="font-mono text-xs">
                   <div className="flex items-center gap-2">
@@ -5487,7 +5513,9 @@ export function DnsRecordsDisplay({
                       size="sm"
                       variant="ghost"
                       className="h-6 w-6 p-0"
-                      onClick={() => copyToClipboard(record.name || "@", `name-${index}`)}
+                      onClick={() =>
+                        copyToClipboard(record.name || "@", `name-${index}`)
+                      }
                     >
                       {copiedField === `name-${index}` ? (
                         <Check className="h-3 w-3 text-green-600" />
@@ -5506,7 +5534,9 @@ export function DnsRecordsDisplay({
                       size="sm"
                       variant="ghost"
                       className="h-6 w-6 p-0"
-                      onClick={() => copyToClipboard(record.value, `value-${index}`)}
+                      onClick={() =>
+                        copyToClipboard(record.value, `value-${index}`)
+                      }
                     >
                       {copiedField === `value-${index}` ? (
                         <Check className="h-3 w-3 text-green-600" />
@@ -5528,8 +5558,17 @@ export function DnsRecordsDisplay({
           </TableBody>
         </Table>
       </div>
+{/* 
+      <Alert className="bg-amber-50 border-amber-200">
+        <Shield className="h-4 w-4 text-amber-600" />
+        <AlertDescription className="text-amber-800 text-sm">
+          <strong>The DMARC record</strong> (highlighted above) is not from
+          Resend — add it manually at your DNS provider. It's required by Gmail
+          and Yahoo for bulk senders and improves deliverability.
+        </AlertDescription>
+      </Alert> */}
 
-      <div className="flex justify-between items-center pt-4">
+      <div className="flex justify-between items-center pt-2">
         <Button
           variant="outline"
           onClick={() => window.open("https://hpanel.hostinger.com", "_blank")}
@@ -5537,19 +5576,19 @@ export function DnsRecordsDisplay({
           <ExternalLink className="mr-2 h-4 w-4" />
           Open Hostinger Panel
         </Button>
-        <Button onClick={onClose}>
-          Done - I'll verify later
-        </Button>
+        <Button onClick={onClose}>Done - I'll verify later</Button>
       </div>
 
       <Alert className="bg-blue-50 border-blue-200">
         <AlertDescription className="text-blue-800 text-sm">
-          <strong>Important:</strong> Don't close this page! You can always view these records again from the domains list after clicking "Done".
+          <strong>Important:</strong> Don't close this page! You can always view
+          these records again from the domains list after clicking "Done".
         </AlertDescription>
       </Alert>
     </div>
-  )
+  );
 }
+
 ```
 
 
@@ -11543,6 +11582,7 @@ interface SelectedTemplate {
 interface EmailComposerProps {
   contactLists: ContactList[];
   senders: Sender[];
+  initialListId?: string; // ← ADD THIS
 }
 
 const VARIABLES = [
@@ -12045,14 +12085,20 @@ function TemplateSelectedBanner({
 
 // ── Main Composer ─────────────────────────────────────────────────────────────
 
-export function EmailComposer({ contactLists, senders }: EmailComposerProps) {
+export function EmailComposer({
+  contactLists,
+  senders,
+  initialListId,
+}: EmailComposerProps) {
   const searchParams = useSearchParams();
   const router = useRouter();
 
   const [subject, setSubject] = useState("");
   const [body, setBody] = useState("");
   const [preheader, setPreheader] = useState("");
-  const [selectedListId, setSelectedListId] = useState("");
+  const [selectedListId, setSelectedListId] = useState(
+    () => initialListId || searchParams.get("listId") || "",
+  );
   const [selectedSenderId, setSelectedSenderId] = useState("");
   const [filteredSenders, setFilteredSenders] = useState<Sender[]>([]);
   const [error, setError] = useState("");
@@ -21616,12 +21662,11 @@ export async function PUT(request: NextRequest) {
             try {
               const { data, error } = await resend.emails.get(messageId);
               if (error || !data) return null;
+
               return {
                 messageId,
-                lastEvent: (data as any).last_event as string | undefined,
-                to: Array.isArray((data as any).to)
-                  ? (data as any).to[0]
-                  : (data as any).to || "",
+                lastEvent: data.last_event as string | undefined,
+                to: Array.isArray(data.to) ? data.to[0] : data.to || "",
               };
             } catch {
               return null;
@@ -21982,6 +22027,24 @@ export async function POST(req: NextRequest) {
 
 ```ts
 // app/api/send-email/route.ts
+//
+// FIXES IN THIS FILE:
+// 1. NEXT_PUBLIC_APP_URL now throws a hard error in production if not set,
+//    instead of silently falling back to localhost:3000 — which was putting
+//    localhost URLs into email bodies and headers, causing:
+//      - Resend's "URLs don't match sending domain" warning
+//      - Click tracking failing (Resend won't proxy localhost links)
+//      - Open tracking potentially not firing (mismatched domain heuristics)
+//      - Unsubscribe links broken in production emails
+//
+// 2. sendBatch return value is now correctly saved as batchIds[] so the sync
+//    route (PUT /api/email-history) can fetch per-message status from Resend.
+//
+// HOW TO FIX THE localhost PROBLEM:
+//   In Vercel dashboard → your project → Settings → Environment Variables:
+//   Add: NEXT_PUBLIC_APP_URL = https://yourdomain.com  (no trailing slash)
+//   Then redeploy. Every email will now contain real URLs.
+
 import { type NextRequest, NextResponse } from "next/server";
 import { getSession } from "@/app/_lib/auth/session";
 import { emailComposeSchema } from "@/app/_lib/validations/email";
@@ -21998,6 +22061,33 @@ export async function POST(request: NextRequest) {
     if (!session?.user?.id) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
+
+    // ── Guard: APP_URL must be set correctly in production ─────────────────
+    const appUrl = process.env.NEXT_PUBLIC_APP_URL;
+    if (!appUrl || appUrl.includes("localhost")) {
+      const isProd = process.env.NODE_ENV === "production";
+      if (isProd) {
+        console.error(
+          "FATAL: NEXT_PUBLIC_APP_URL is not set or still points to localhost. " +
+            "Set it to your production URL in Vercel environment variables.",
+        );
+        return NextResponse.json(
+          {
+            error:
+              "Server misconfiguration: NEXT_PUBLIC_APP_URL must be set to your production URL " +
+              "(e.g. https://yourdomain.com). Email sending is blocked to prevent broken links.",
+          },
+          { status: 500 },
+        );
+      }
+      // In development, localhost is fine — just log a reminder
+      console.warn(
+        "NEXT_PUBLIC_APP_URL is using localhost — this is fine for dev, " +
+          "but remember to set it in Vercel before sending real campaigns.",
+      );
+    }
+
+    const safeAppUrl = appUrl || "http://localhost:3000";
 
     const body = await request.json();
     const validationResult = emailComposeSchema.safeParse(body);
@@ -22063,7 +22153,6 @@ export async function POST(request: NextRequest) {
     if (dbContacts.length > 0) {
       recipientContacts = dbContacts;
     } else {
-      // Legacy fallback: use emails[] array from contact list
       recipientContacts = contactList.emails.map((e) => ({ email: e }));
     }
 
@@ -22112,7 +22201,6 @@ export async function POST(request: NextRequest) {
       },
     });
 
-    const appUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
     const fromAddress = `${sender.name} <${sender.email}>`;
 
     // Build batch payload — one email per recipient with personalisation
@@ -22128,7 +22216,9 @@ export async function POST(request: NextRequest) {
       };
 
       const personalizedBody = replaceVariables(emailBody, variables);
-      const unsubscribeUrl = `${appUrl}/api/unsubscribe?email=${encodeURIComponent(contact.email)}&historyId=${emailHistory.id}`;
+
+      // ── Use safeAppUrl (real production URL, never localhost) ─────────────
+      const unsubscribeUrl = `${safeAppUrl}/api/unsubscribe?email=${encodeURIComponent(contact.email)}&historyId=${emailHistory.id}`;
 
       const html = generateEmailTemplate({
         body: personalizedBody,
@@ -22155,19 +22245,23 @@ export async function POST(request: NextRequest) {
       };
     });
 
-    // Send in batches of 100
+    // Send in batches of 100 (Resend's batch limit)
+    // sendBatch returns { ids: string[], failedCount: number }
+    // ids = Resend message IDs — one per successfully queued email
+    // These are stored in batchIds[] on EmailHistory so the sync route
+    // (PUT /api/email-history) can poll each message's status via resend.emails.get(id)
     const { ids, failedCount } = await sendBatch(batchPayload, emailHistory.id);
 
     const sentCount = recipientContacts.length - failedCount;
 
-    // Update history with results
+    // Update history with results — batchIds is the critical field for sync
     await prisma.emailHistory.update({
       where: { id: emailHistory.id },
       data: {
         status: failedCount === recipientContacts.length ? "failed" : "sent",
         sentCount,
         failedCount,
-        batchIds: ids,
+        batchIds: ids, // ← stores all Resend message IDs for later sync
       },
     });
 
@@ -22177,6 +22271,8 @@ export async function POST(request: NextRequest) {
       recipientCount: recipientContacts.length,
       sentCount,
       failedCount,
+      // Surface this in dev so you can verify it's populated
+      batchIdCount: ids.length,
     });
   } catch (error) {
     console.error("Error sending batch email:", error);
@@ -23795,7 +23891,7 @@ export default function RootLayout({
       <body className={`${poppins.className}`}>
         <Toaster />
         <Loader />
-        {children}
+        <Suspense>{children}</Suspense>
       </body>
     </html>
   );

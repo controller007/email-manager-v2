@@ -70,14 +70,16 @@ model Contact {
 }
 
 model Domain {
-  id        String   @id @default(auto()) @map("_id") @db.ObjectId
-  domain    String   @unique
-  status    String   @default("pending") // pending | verified | failed
-  region    String   @default("us-east-1")
-  resendId  String?  @unique
-  userId    String   @db.ObjectId
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                String   @id @default(auto()) @map("_id") @db.ObjectId
+  domain            String   @unique
+  status            String   @default("pending") // pending | verified | failed
+  region            String   @default("us-east-1")
+  resendId          String?  @unique
+  userId            String   @db.ObjectId
+  trackingSubdomain String?
+  trackingStatus    String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   senders      Sender[]
   contactLists ContactList[]
@@ -126,8 +128,7 @@ model EmailRecipientEvent {
   createdAt       DateTime @default(now())
 
   emailHistory EmailHistory @relation(fields: [emailHistoryId], references: [id], onDelete: Cascade)
-  
-  @@unique([emailHistoryId, recipientEmail, resendMessageId])
+
   @@map("email_recipient_events")
 }
 

@@ -284,7 +284,7 @@ export default async function DashboardPage() {
                 const openRate =
                   email.deliveredCount > 0
                     ? Math.round(
-                        (email.openedCount / email.deliveredCount) * 100,
+                        (email.clickedCount / email.deliveredCount) * 100,
                       )
                     : 0;
 
@@ -336,7 +336,7 @@ export default async function DashboardPage() {
                           {openRate}%
                         </p>
                         <p className="text-[10px] text-gray-400 uppercase tracking-wide">
-                          Opened
+                          Clicked
                         </p>
                       </div>
                     </div>
