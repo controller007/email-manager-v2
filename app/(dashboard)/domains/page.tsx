@@ -7,8 +7,7 @@ import { DomainsStats } from "../../_components/domain-stats";
 
 export default async function DomainsPage() {
   await requireAuth();
-  const { domains } = await getAllDomains();
-
+  const { domains } = await getAllDomains();  
   return (
     <div className="space-y-6">
       <div className="flex items-start justify-between flex-wrap gap-4">

@@ -1,13 +1,42 @@
 // app/api/resend/webhook/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import prisma from "@/app/_lib/db/prisma";
-import { resend } from "@/app/_lib/email/resend-client";
 
-// ── Helper: extract tracking status from Resend records ──────────────────────
+function resendStatusToDbStatus(resendStatus: string): "verified" | "pending" {
+  return resendStatus === "verified" ||
+    resendStatus === "partially_verified" ||
+    resendStatus === "partially_failed"
+    ? "verified"
+    : "pending";
+}
 
-function getTrackingStatusFromRecords(records: any[]): "verified" | "pending" {
-  const trackingCname = records?.find((r: any) => r.record === "Tracking");
-  return trackingCname?.status === "verified" ? "verified" : "pending";
+function getTrackingInfoFromRecords(records: any[]): {
+  trackingStatus: "verified" | "pending" | "failed" | null;
+  trackingSubdomainName: string | null;
+} {
+  if (!Array.isArray(records))
+    return { trackingStatus: null, trackingSubdomainName: null };
+
+  const trackingRecord = records.find((r: any) => r.record === "Tracking");
+  if (!trackingRecord)
+    return { trackingStatus: null, trackingSubdomainName: null };
+
+  const raw = trackingRecord.status; // "verified" | "not_started" | "pending" | "failed"
+  let trackingStatus: "verified" | "pending" | "failed";
+
+  if (raw === "verified") {
+    trackingStatus = "verified";
+  } else if (raw === "failed") {
+    trackingStatus = "failed";
+  } else {
+    // "not_started" | "pending" | anything else → still pending from our POV
+    trackingStatus = "pending";
+  }
+
+  // trackingRecord.name is the subdomain prefix e.g. "track" (not the full domain)
+  const trackingSubdomainName = trackingRecord.name || "track";
+
+  return { trackingStatus, trackingSubdomainName };
 }
 
 export async function POST(req: NextRequest) {
@@ -29,7 +58,8 @@ export async function POST(req: NextRequest) {
     // ── Domain events ──────────────────────────────────────────────────────
     if (type === "domain.updated" || type === "domain.verified") {
       const resendDomainId = data?.id;
-      const resendStatus = data?.status;
+      const resendStatus: string = data?.status ?? "";
+      const records: any[] = data?.records ?? [];
 
       if (!resendDomainId) return NextResponse.json({ ok: true });
 
@@ -38,59 +68,79 @@ export async function POST(req: NextRequest) {
       });
       if (!domain) return NextResponse.json({ ok: true });
 
-      const newStatus = resendStatus === "verified" ? "verified" : "pending";
-      const dbUpdate: Record<string, any> = { status: newStatus };
+      const newDbStatus = resendStatusToDbStatus(resendStatus);
+      const dbUpdate: Record<string, any> = {};
 
-      // ── When domain becomes verified: activate tracking on Resend ────────
-      if (newStatus === "verified" && domain.status !== "verified") {
-        try {
-          const { data: updated } = await resend.domains.update({
-            id: resendDomainId,
-            openTracking: true,
-            clickTracking: true,
-            trackingSubdomain: "track",
-          });
+      // ── Domain status ────────────────────────────────────────────────────
+      // Only update status if:
+      //   (a) domain is becoming verified for the first time, OR
+      //   (b) domain is genuinely going back to pending (resendStatus is
+      //       "pending" or "failed" — i.e. NOT any of the partially-* variants)
+      // This prevents partially_verified/partially_failed from ever
+      // downgrading a domain that was already verified.
+      const domainIsCurrentlyVerified = domain.status === "verified";
+      const newStatusIsVerified = newDbStatus === "verified";
 
-          if (updated) {
-            // Check if the tracking record is already verified in this update
-            const allRecords = (updated as any).records ?? [];
-            const trackingStatus = getTrackingStatusFromRecords(allRecords);
-            dbUpdate.trackingSubdomain = "track";
-            dbUpdate.trackingStatus = trackingStatus;
-            console.log(
-              `Domain ${domain.domain}: tracking activated, status=${trackingStatus}`,
-            );
-          }
-        } catch (e) {
-          console.error("Failed to enable tracking on domain.verified:", e);
-          // Don't fail the webhook — just log and continue
+      if (!domainIsCurrentlyVerified && newStatusIsVerified) {
+        // First time going verified
+        dbUpdate.status = "verified";
+      } else if (domainIsCurrentlyVerified && !newStatusIsVerified) {
+        // Only downgrade if Resend explicitly says failed/pending
+        // (not partially_* — those keep the domain sendable)
+        if (resendStatus === "failed" || resendStatus === "pending") {
+          dbUpdate.status = "pending";
         }
+        // partially_verified / partially_failed → do NOT touch status
+      } else if (!domainIsCurrentlyVerified && !newStatusIsVerified) {
+        // Still pending — keep as pending, nothing to do
       }
+      // domainIsCurrentlyVerified && newStatusIsVerified → no change needed
 
-      // ── On any domain.updated: also sync tracking status if records present
-      // (Resend may send a domain.updated after tracking DNS is verified)
-      if (type === "domain.updated" && data?.records) {
-        const trackingStatus = getTrackingStatusFromRecords(data.records);
-        // Only update if the domain is already verified (tracking only applies then)
-        if (domain.status === "verified" || newStatus === "verified") {
+      // ── Tracking status ──────────────────────────────────────────────────
+      // Only process tracking if domain is verified (or becoming verified now)
+      const willBeVerified =
+        dbUpdate.status === "verified" || domainIsCurrentlyVerified;
+
+      if (willBeVerified && records.length > 0) {
+        const { trackingStatus, trackingSubdomainName } =
+          getTrackingInfoFromRecords(records);
+
+        if (trackingStatus !== null) {
+          // We have a Tracking record in this payload — sync it
           dbUpdate.trackingStatus = trackingStatus;
-          if (trackingStatus === "verified" && !domain.trackingSubdomain) {
-            dbUpdate.trackingSubdomain = "track";
+
+          // If subdomain isn't persisted yet, save it from the record name
+          if (!domain.trackingSubdomain && trackingSubdomainName) {
+            dbUpdate.trackingSubdomain = trackingSubdomainName;
           }
+
           console.log(
-            `Domain ${domain.domain}: tracking status from webhook = ${trackingStatus}`,
+            `Webhook: ${domain.domain} tracking → ${trackingStatus} (record status: ${records.find((r) => r.record === "Tracking")?.status}, Resend domain status: ${resendStatus})`,
+          );
+        } else {
+          // No Tracking record in this payload — domain just became verified
+          // without a tracking subdomain. trackingStatus stays null/unchanged.
+          console.log(
+            `Webhook: ${domain.domain} verified (no tracking record in payload yet)`,
           );
         }
       }
 
-      await prisma.domain.update({
-        where: { id: domain.id },
-        data: dbUpdate,
-      });
+      if (Object.keys(dbUpdate).length > 0) {
+        await prisma.domain.update({
+          where: { id: domain.id },
+          data: dbUpdate,
+        });
+        console.log(
+          `Webhook domain.updated: ${domain.domain} → DB update:`,
+          JSON.stringify(dbUpdate),
+        );
+      } else {
+        console.log(
+          `Webhook domain.updated: ${domain.domain} → no DB changes needed (resendStatus=${resendStatus})`,
+        );
+      }
 
-      console.log(
-        `Webhook domain.updated: ${domain.domain} → status=${newStatus}, tracking=${dbUpdate.trackingStatus ?? "unchanged"}`,
-      );
       return NextResponse.json({ ok: true });
     }
 
@@ -117,7 +167,7 @@ export async function POST(req: NextRequest) {
 
     if (!emailHistory && legacyBroadcastId) {
       console.log(
-        `Webhook: Legacy broadcastId ${legacyBroadcastId} — no history found (expected for old records)`,
+        `Webhook: Legacy broadcastId ${legacyBroadcastId} — no history found`,
       );
     }
 
