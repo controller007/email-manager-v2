@@ -51,7 +51,7 @@ export const authOptions: NextAuthOptions = {
 
           const passwordsMatch = await bcrypt.compare(
             credentials.password,
-            user.password
+            user.password,
           );
 
           if (passwordsMatch) {

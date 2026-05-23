@@ -48,6 +48,7 @@ import {
   Layers,
   CheckCircle2,
   AlertTriangle,
+  X,
 } from "lucide-react";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -69,7 +70,6 @@ interface ContactList {
   id: string;
   name: string;
   description?: string | null;
-  // domainId is needed for creating overflow lists
   domainId: string;
   domain: { domain: string };
   _count: { contacts: number; emailHistory: number };
@@ -129,13 +129,6 @@ const generateBaseName = () => {
   const noun = NOUNS[Math.floor(Math.random() * NOUNS.length)];
   return `${adj} ${noun}`;
 };
-
-function chunkArray<T>(arr: T[], size: number): T[][] {
-  const chunks: T[][] = [];
-  for (let i = 0; i < arr.length; i += size)
-    chunks.push(arr.slice(i, i + size));
-  return chunks;
-}
 
 // ── Status Badge ──────────────────────────────────────────────────────────────
 
@@ -360,7 +353,7 @@ function EditContactDialog({
   return (
     <>
       <button
-        className="p-1.5 rounded-lg text-gray-300 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+        className="p-1 rounded-md text-gray-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
         onClick={() => {
           setFirstName(contact.firstName || "");
           setLastName(contact.lastName || "");
@@ -457,7 +450,7 @@ function EditContactDialog({
   );
 }
 
-// ── CSV Import Dialog — with overflow splitting ───────────────────────────────
+// ── CSV Import Dialog ─────────────────────────────────────────────────────────
 
 interface OverflowList {
   id: string;
@@ -471,6 +464,21 @@ interface ImportProgress {
   currentStep: string;
   overflowLists: OverflowList[];
   error?: string;
+}
+
+interface EmailValidationResult {
+  email: string;
+  isValid: boolean;
+  hasMxRecord: boolean;
+  isReachable: boolean;
+  error?: string;
+}
+
+function chunkArray<T>(arr: T[], size: number): T[][] {
+  const chunks: T[][] = [];
+  for (let i = 0; i < arr.length; i += size)
+    chunks.push(arr.slice(i, i + size));
+  return chunks;
 }
 
 function CsvImportDialog({
@@ -493,20 +501,74 @@ function CsvImportDialog({
   const [progress, setProgress] = useState<ImportProgress | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
 
+  // Validation state
+  const [isValidating, setIsValidating] = useState(false);
+  const [validateDone, setValidateDone] = useState(0);
+  const [validateTotal, setValidateTotal] = useState(0);
+  const [invalidEmails, setInvalidEmails] = useState<
+    Array<{ email: string; reason: string }>
+  >([]);
+  const [validationRan, setValidationRan] = useState(false);
+
+  const validParsed = parsed.filter(
+    (c) => !invalidEmails.some((i) => i.email === c.email),
+  );
   const remaining = MAX_CONTACTS - currentCount;
-  const willOverflow = parsed.length > remaining;
-  const overflowCount = Math.max(0, parsed.length - remaining);
+  const willOverflow = validParsed.length > remaining;
+  const overflowCount = Math.max(0, validParsed.length - remaining);
   const newListsNeeded =
     overflowCount > 0 ? Math.ceil(overflowCount / MAX_CONTACTS) : 0;
-  const totalLists = newListsNeeded + (remaining > 0 ? 1 : 0); // current list + new ones
+  const totalLists = newListsNeeded + (remaining > 0 ? 1 : 0);
+  const hasInvalid = invalidEmails.length > 0;
 
   const parseCSV = (text: string) => {
-    const lines = text.trim().split(/\r?\n/);
-    if (lines.length < 2) return [];
-    const headers = lines[0]
-      .split(",")
-      .map((h) => h.trim().toLowerCase().replace(/['"]/g, ""));
-    const emailIdx = headers.findIndex((h) => h === "email");
+    // Proper RFC-4180 parser — handles quoted fields with commas and newlines
+    const allRows: string[][] = [];
+    let row: string[] = [];
+    let field = "";
+    let inQuote = false;
+
+    for (let i = 0; i < text.length; i++) {
+      const ch = text[i];
+      const next = text[i + 1];
+      if (inQuote) {
+        if (ch === '"' && next === '"') {
+          field += '"';
+          i++;
+        } else if (ch === '"') {
+          inQuote = false;
+        } else {
+          field += ch;
+        }
+      } else {
+        if (ch === '"') {
+          inQuote = true;
+        } else if (ch === ",") {
+          row.push(field.trim());
+          field = "";
+        } else if (ch === "\n") {
+          row.push(field.trim());
+          field = "";
+          allRows.push(row);
+          row = [];
+        } else if (ch === "\r") {
+          /* skip */
+        } else {
+          field += ch;
+        }
+      }
+    }
+    row.push(field.trim());
+    if (row.some(Boolean)) allRows.push(row);
+
+    if (allRows.length < 2) return [];
+
+    const headers = allRows[0].map((h) =>
+      h.replace(/^"|"$/g, "").trim().toLowerCase(),
+    );
+    const emailIdx = headers.findIndex(
+      (h) => h === "email" || h.includes("email"),
+    );
     const firstIdx = headers.findIndex((h) => h.includes("first"));
     const lastIdx = headers.findIndex((h) => h.includes("last"));
     const companyIdx = headers.findIndex(
@@ -515,19 +577,24 @@ function CsvImportDialog({
     const phoneIdx = headers.findIndex(
       (h) => h.includes("phone") || h === "tel",
     );
+
     if (emailIdx === -1) throw new Error("CSV must have an 'email' column");
-    return lines
+
+    return allRows
       .slice(1)
-      .map((line) => {
-        const cols = line.split(",").map((c) => c.trim().replace(/['"]/g, ""));
-        const email = cols[emailIdx]?.toLowerCase();
+      .map((cols) => {
+        const email = cols[emailIdx]?.toLowerCase().trim();
         if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return null;
         return {
           email,
-          firstName: firstIdx >= 0 ? cols[firstIdx] || undefined : undefined,
-          lastName: lastIdx >= 0 ? cols[lastIdx] || undefined : undefined,
-          company: companyIdx >= 0 ? cols[companyIdx] || undefined : undefined,
-          phone: phoneIdx >= 0 ? cols[phoneIdx] || undefined : undefined,
+          firstName:
+            firstIdx >= 0 ? cols[firstIdx]?.trim() || undefined : undefined,
+          lastName:
+            lastIdx >= 0 ? cols[lastIdx]?.trim() || undefined : undefined,
+          company:
+            companyIdx >= 0 ? cols[companyIdx]?.trim() || undefined : undefined,
+          phone:
+            phoneIdx >= 0 ? cols[phoneIdx]?.trim() || undefined : undefined,
         };
       })
       .filter(Boolean);
@@ -538,6 +605,10 @@ function CsvImportDialog({
     if (!file) return;
     setFileName(file.name);
     setError("");
+    setInvalidEmails([]);
+    setValidationRan(false);
+    setValidateDone(0);
+    setValidateTotal(0);
     const reader = new FileReader();
     reader.onload = (ev) => {
       try {
@@ -550,48 +621,97 @@ function CsvImportDialog({
     reader.readAsText(file);
   };
 
-  const handleImport = async () => {
+  // ── Validate emails in batches of 100 ─────────────────────────────────────
+  const handleValidate = async () => {
     if (parsed.length === 0) return;
+    const emails = parsed.map((c: any) => c.email);
+    setIsValidating(true);
+    setError("");
+    setInvalidEmails([]);
+    setValidateTotal(emails.length);
+    setValidateDone(0);
 
+    const batches = chunkArray(emails, 100);
+    let done = 0;
+    const allInvalid: Array<{ email: string; reason: string }> = [];
+
+    for (const batch of batches) {
+      try {
+        const res = await fetch("/api/validate-emails", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ emails: batch }),
+        });
+        if (!res.ok) {
+          const d = await res.json().catch(() => ({}));
+          throw new Error((d as any).error || "Validation failed");
+        }
+        const results: EmailValidationResult[] = await res.json();
+
+        // Flag bad: valid format but no working MX (timeouts are NOT flagged)
+        results.forEach((r) => {
+          if (r.error === "Validation timeout") return;
+          if (r.isValid && (!r.hasMxRecord || !r.isReachable)) {
+            allInvalid.push({
+              email: r.email,
+              reason: r.error || "MX check failed",
+            });
+          }
+        });
+
+        done += batch.length;
+        setValidateDone(done);
+        // Update invalid list after each batch so UI shows progress
+        setInvalidEmails([...allInvalid]);
+      } catch (err) {
+        setError(err instanceof Error ? err.message : "Validation failed");
+        break;
+      }
+    }
+
+    setIsValidating(false);
+    setValidationRan(true);
+  };
+
+  const removeInvalid = (email: string) =>
+    setInvalidEmails((prev) => prev.filter((i) => i.email !== email));
+
+  const clearAllInvalid = () => setInvalidEmails([]);
+
+  const handleImport = async () => {
+    if (validParsed.length === 0) return;
     const baseName = generateBaseName();
     const prog: ImportProgress = {
       status: "running",
-      totalContacts: parsed.length,
+      totalContacts: validParsed.length,
       savedContacts: 0,
       currentStep: "",
       overflowLists: [],
     };
     setProgress({ ...prog });
-
     try {
-      // ── Step 1: fill current list up to its remaining capacity ──────────
-      const batch1 = parsed.slice(0, remaining);
+      const batch1 = validParsed.slice(0, remaining);
       if (batch1.length > 0) {
         prog.currentStep = `Adding ${batch1.length} contacts to "${listName}"…`;
         setProgress({ ...prog });
-
         const res = await fetch(`/api/contact-lists/${listId}/contacts`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ contacts: batch1 }),
         });
         const data = await res.json();
-        if (!res.ok)
-          throw new Error(data.error || "Failed to import into current list");
+        if (!res.ok) throw new Error(data.error || "Failed to import");
         prog.savedContacts += batch1.length;
         setProgress({ ...prog });
       }
-
-      // ── Step 2: create new lists for overflow ──────────────────────────
-      const overflow = parsed.slice(remaining);
+      const overflow = validParsed.slice(remaining);
       if (overflow.length > 0) {
         const overflowBatches = chunkArray(overflow, MAX_CONTACTS);
         for (let i = 0; i < overflowBatches.length; i++) {
           const batch = overflowBatches[i];
           const newName = `${baseName}-${i + 2}`;
-          prog.currentStep = `Creating new list "${newName}" (${batch.length} contacts)…`;
+          prog.currentStep = `Creating "${newName}" (${batch.length} contacts)…`;
           setProgress({ ...prog });
-
           const res = await fetch("/api/contact-lists", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
@@ -599,10 +719,7 @@ function CsvImportDialog({
           });
           const data = await res.json();
           if (!res.ok)
-            throw new Error(
-              data.error || `Failed to create overflow list ${i + 2}`,
-            );
-
+            throw new Error(data.error || `Failed to create overflow list`);
           prog.savedContacts += batch.length;
           prog.overflowLists.push({
             id: data.id,
@@ -612,7 +729,6 @@ function CsvImportDialog({
           setProgress({ ...prog });
         }
       }
-
       prog.status = "done";
       prog.currentStep = "All contacts imported!";
       setProgress({ ...prog });
@@ -630,12 +746,18 @@ function CsvImportDialog({
     setFileName("");
     setError("");
     setProgress(null);
+    setInvalidEmails([]);
+    setValidationRan(false);
+    setValidateDone(0);
+    setValidateTotal(0);
     if (fileRef.current) fileRef.current.value = "";
   };
 
   const pct = progress
     ? Math.round((progress.savedContacts / progress.totalContacts) * 100)
     : 0;
+  const validatePct =
+    validateTotal > 0 ? Math.round((validateDone / validateTotal) * 100) : 0;
 
   return (
     <>
@@ -645,7 +767,7 @@ function CsvImportDialog({
       <Dialog
         open={open}
         onOpenChange={(v) => {
-          if (!v && progress?.status === "running") return;
+          if (!v && (progress?.status === "running" || isValidating)) return;
           if (!v) reset();
           else setOpen(true);
         }}
@@ -670,10 +792,9 @@ function CsvImportDialog({
             </DialogDescription>
           </DialogHeader>
 
-          {/* ── Progress view ───────────────────────────────────────────── */}
+          {/* ── Import progress view ─────────────────────────────────── */}
           {progress ? (
             <div className="space-y-4 mt-2">
-              {/* Progress bar */}
               <div className="space-y-1.5">
                 <div className="flex justify-between text-xs text-gray-500">
                   <span>{pct}% complete</span>
@@ -686,24 +807,18 @@ function CsvImportDialog({
                   className={`h-2 ${progress.status === "done" ? "[&>div]:bg-emerald-500" : "[&>div]:bg-blue-500 [&>div]:transition-all [&>div]:duration-300"}`}
                 />
               </div>
-
-              {/* Current step */}
               {progress.status === "running" && (
                 <div className="flex items-center gap-2 text-xs text-gray-500">
                   <div className="h-3.5 w-3.5 rounded-full border-2 border-blue-400 border-t-transparent animate-spin shrink-0" />
                   {progress.currentStep}
                 </div>
               )}
-
-              {/* Error */}
               {progress.error && (
                 <Alert variant="destructive">
                   <AlertCircle className="h-4 w-4" />
                   <AlertDescription>{progress.error}</AlertDescription>
                 </Alert>
               )}
-
-              {/* New lists created */}
               {progress.overflowLists.length > 0 && (
                 <div className="space-y-1.5">
                   <p className="text-xs font-semibold text-gray-500 uppercase tracking-wider">
@@ -732,8 +847,6 @@ function CsvImportDialog({
                   </div>
                 </div>
               )}
-
-              {/* Done */}
               {progress.status === "done" && (
                 <Alert className="border-emerald-200 bg-emerald-50">
                   <CheckCircle2 className="h-4 w-4 text-emerald-600" />
@@ -746,7 +859,6 @@ function CsvImportDialog({
                   </AlertDescription>
                 </Alert>
               )}
-
               <DialogFooter>
                 {progress.status === "done" || progress.status === "error" ? (
                   <Button onClick={reset}>
@@ -760,34 +872,12 @@ function CsvImportDialog({
               </DialogFooter>
             </div>
           ) : (
-            /* ── Normal upload view ─────────────────────────────────────── */
+            /* ── Upload + validate + import view ────────────────────── */
             <div className="space-y-4 mt-2">
               {error && (
                 <Alert variant="destructive">
                   <AlertCircle className="h-4 w-4" />
                   <AlertDescription>{error}</AlertDescription>
-                </Alert>
-              )}
-
-              {/* ── BIG OVERFLOW WARNING ──────────────────────────────── */}
-              {willOverflow && (
-                <Alert className="border-amber-300 bg-amber-50">
-                  <AlertTriangle className="h-4 w-4 text-amber-600" />
-                  <AlertDescription className="text-amber-900">
-                    <strong className="block mb-1">
-                      This list can only hold {remaining} more contacts.
-                    </strong>
-                    Your CSV has <strong>{parsed.length} contacts</strong> — the
-                    first <strong>{remaining}</strong> will be added to{" "}
-                    <em>"{listName}"</em>, and the remaining{" "}
-                    <strong>{overflowCount}</strong> will automatically be saved
-                    into{" "}
-                    <strong>
-                      {newListsNeeded} new list{newListsNeeded !== 1 ? "s" : ""}
-                    </strong>{" "}
-                    on the same domain. No contacts will be lost. You can rename
-                    the new lists afterwards from the contact lists page.
-                  </AlertDescription>
                 </Alert>
               )}
 
@@ -801,14 +891,8 @@ function CsvImportDialog({
                   {fileName || "Click to upload CSV"}
                 </p>
                 <p className="text-xs text-gray-400 mt-1">
-                  Supports .csv files
+                  Supports .csv files with an email column
                 </p>
-                {!fileName && remaining < MAX_CONTACTS && (
-                  <p className="text-xs text-amber-600 mt-1 flex items-center justify-center gap-1">
-                    <Layers className="h-3 w-3" /> Large CSVs auto-split into
-                    new lists
-                  </p>
-                )}
                 <input
                   ref={fileRef}
                   type="file"
@@ -818,31 +902,158 @@ function CsvImportDialog({
                 />
               </div>
 
-              {/* Parsed summary */}
+              {/* Parsed summary + validate button */}
               {parsed.length > 0 && (
-                <div
-                  className={`p-3 rounded-xl border ${willOverflow ? "bg-blue-50 border-blue-200" : "bg-emerald-50 border-emerald-200"}`}
-                >
-                  <p
-                    className={`text-sm font-semibold ${willOverflow ? "text-blue-800" : "text-emerald-700"}`}
+                <div className="space-y-3">
+                  {/* Overflow warning */}
+                  {willOverflow && (
+                    <Alert className="border-amber-300 bg-amber-50">
+                      <AlertTriangle className="h-4 w-4 text-amber-600" />
+                      <AlertDescription className="text-amber-900">
+                        <strong className="block mb-1">
+                          This list can only hold {remaining} more contacts.
+                        </strong>
+                        The first <strong>{remaining}</strong> go to "{listName}
+                        ", the remaining <strong>
+                          {overflowCount}
+                        </strong> into{" "}
+                        <strong>
+                          {newListsNeeded} new list
+                          {newListsNeeded !== 1 ? "s" : ""}
+                        </strong>
+                        .
+                      </AlertDescription>
+                    </Alert>
+                  )}
+
+                  {/* Contact count summary */}
+                  <div
+                    className={`p-3 rounded-xl border ${willOverflow ? "bg-blue-50 border-blue-200" : "bg-emerald-50 border-emerald-200"}`}
                   >
-                    {willOverflow ? (
-                      <Layers className="inline h-3.5 w-3.5 mr-1" />
-                    ) : (
-                      "✓ "
+                    <div className="flex items-center justify-between gap-3">
+                      <p
+                        className={`text-sm font-semibold ${willOverflow ? "text-blue-800" : "text-emerald-700"}`}
+                      >
+                        {willOverflow ? (
+                          <Layers className="inline h-3.5 w-3.5 mr-1" />
+                        ) : (
+                          "✓ "
+                        )}
+                        {validParsed.length} contact
+                        {validParsed.length !== 1 ? "s" : ""} ready
+                        {willOverflow && ` → ${totalLists} lists`}
+                      </p>
+                      {/* Validate button */}
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        className="h-7 text-xs bg-blue-600 text-white hover:bg-blue-500 border-blue-600 hover:text-white shrink-0"
+                        onClick={handleValidate}
+                        disabled={isValidating}
+                      >
+                        {isValidating ? (
+                          <>
+                            <div className="h-3 w-3 rounded-full border-2 border-white border-t-transparent animate-spin mr-1.5" />
+                            {validateDone}/{validateTotal}
+                          </>
+                        ) : validationRan ? (
+                          <>
+                            <CheckCircle2 className="h-3 w-3 mr-1.5" />
+                            Re-validate
+                          </>
+                        ) : (
+                          <>
+                            <CheckCircle2 className="h-3 w-3 mr-1.5" />
+                            Validate Emails
+                          </>
+                        )}
+                      </Button>
+                    </div>
+
+                    {/* Validate progress bar — only shown while running */}
+                    {isValidating && (
+                      <div className="mt-2 space-y-1">
+                        <Progress
+                          value={validatePct}
+                          className="h-1.5 [&>div]:bg-blue-400 [&>div]:transition-all [&>div]:duration-300"
+                        />
+                        <p className="text-xs text-blue-600">
+                          {validatePct}% validated
+                        </p>
+                      </div>
                     )}
-                    {parsed.length} valid contacts found
-                    {willOverflow &&
-                      ` → ${totalLists} list${totalLists !== 1 ? "s" : ""}`}
-                  </p>
-                  <p className="text-xs mt-0.5 text-gray-500">
-                    Preview:{" "}
-                    {parsed
-                      .slice(0, 3)
-                      .map((c: any) => c.email)
-                      .join(", ")}
-                    {parsed.length > 3 ? ` +${parsed.length - 3} more` : ""}
-                  </p>
+
+                    {validationRan && !isValidating && (
+                      <p className="text-xs mt-1.5 text-gray-500">
+                        Preview:{" "}
+                        {validParsed
+                          .slice(0, 3)
+                          .map((c: any) => c.email)
+                          .join(", ")}
+                        {validParsed.length > 3
+                          ? ` +${validParsed.length - 3} more`
+                          : ""}
+                      </p>
+                    )}
+                    {!validationRan && (
+                      <p className="text-xs mt-1 text-gray-500">
+                        Preview:{" "}
+                        {parsed
+                          .slice(0, 3)
+                          .map((c: any) => c.email)
+                          .join(", ")}
+                        {parsed.length > 3 ? ` +${parsed.length - 3} more` : ""}
+                      </p>
+                    )}
+                  </div>
+
+                  {/* Invalid emails section */}
+                  {invalidEmails.length > 0 && (
+                    <div className="space-y-1.5">
+                      <div className="flex items-center justify-between">
+                        <p className="text-xs font-semibold text-red-600 flex items-center gap-1">
+                          <AlertCircle className="h-3.5 w-3.5" />
+                          Invalid / unreachable ({invalidEmails.length})
+                        </p>
+                        <button
+                          type="button"
+                          onClick={clearAllInvalid}
+                          className="text-xs text-red-500 hover:text-red-700 flex items-center gap-1"
+                        >
+                          <Trash2 className="h-3 w-3" /> Clear all
+                        </button>
+                      </div>
+                      <div className="max-h-36 overflow-y-auto border border-red-200 bg-red-50 rounded-lg divide-y divide-red-100">
+                        {invalidEmails.map((item, i) => (
+                          <div
+                            key={i}
+                            className="flex items-center justify-between px-3 py-1.5 text-xs"
+                          >
+                            <div className="min-w-0">
+                              <span className="text-red-700 font-medium truncate">
+                                {item.email}
+                              </span>
+                              <span className="text-red-400 ml-1.5">
+                                · {item.reason}
+                              </span>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => removeInvalid(item.email)}
+                              className="ml-2 p-0.5 hover:bg-red-200 rounded-full shrink-0"
+                            >
+                              <X className="h-3 w-3 text-red-600" />
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                      <p className="text-xs text-red-600 flex items-center gap-1">
+                        <AlertCircle className="h-3 w-3" />
+                        Remove or dismiss invalid emails before importing.
+                      </p>
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -850,14 +1061,23 @@ function CsvImportDialog({
                 <Button variant="outline" onClick={reset}>
                   Cancel
                 </Button>
-                <Button onClick={handleImport} disabled={parsed.length === 0}>
-                  {willOverflow ? (
+                <Button
+                  onClick={handleImport}
+                  disabled={validParsed.length === 0 || hasInvalid}
+                  title={hasInvalid ? "Remove invalid emails first" : undefined}
+                >
+                  {hasInvalid ? (
+                    <>
+                      <AlertCircle className="mr-1.5 h-3.5 w-3.5" />
+                      Fix invalid emails first
+                    </>
+                  ) : willOverflow ? (
                     <>
                       <Layers className="mr-1.5 h-3.5 w-3.5" />
-                      Import {parsed.length} contacts ({totalLists} lists)
+                      Import {validParsed.length} contacts ({totalLists} lists)
                     </>
                   ) : (
-                    `Import ${parsed.length} Contacts`
+                    `Import ${validParsed.length} Contacts`
                   )}
                 </Button>
               </DialogFooter>
@@ -887,7 +1107,8 @@ export function ContactListDetail({
   const [searchInput, setSearchInput] = useState("");
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = useState(false);
-  const [isPending, startTransition] = useTransition();
+  // Track which row is hovered for showing inline actions
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
 
   const isAllSelected =
     contacts.length > 0 && selectedIds.size === contacts.length;
@@ -916,7 +1137,6 @@ export function ContactListDetail({
     fetchContacts(1, searchInput);
   };
   const handlePageChange = (page: number) => fetchContacts(page, search);
-
   const toggleSelect = (id: string) => {
     const next = new Set(selectedIds);
     next.has(id) ? next.delete(id) : next.add(id);
@@ -946,6 +1166,20 @@ export function ContactListDetail({
       toast.error("Failed to delete contacts.");
     } finally {
       setIsDeleting(false);
+    }
+  };
+
+  const handleDeleteOne = async (contactId: string) => {
+    const res = await fetch(`/api/contact-lists/${list.id}/contacts`, {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ contactIds: [contactId] }),
+    });
+    if (res.ok) {
+      toast.success("Contact removed.");
+      fetchContacts(currentPage, search);
+    } else {
+      toast.error("Failed to remove contact.");
     }
   };
 
@@ -990,7 +1224,7 @@ export function ContactListDetail({
 
   return (
     <div className="space-y-6">
-      {/* ── Header ──────────────────────────────────────────────────────── */}
+      {/* Header */}
       <div className="flex items-start justify-between flex-wrap gap-4">
         <div className="flex items-center gap-3 flex-wrap">
           <Button variant="outline" size="sm" asChild className="shrink-0">
@@ -1025,7 +1259,7 @@ export function ContactListDetail({
         </Button>
       </div>
 
-      {/* ── Stats ───────────────────────────────────────────────────────── */}
+      {/* Stats */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
         {[
           {
@@ -1077,7 +1311,7 @@ export function ContactListDetail({
         ))}
       </div>
 
-      {/* ── Contacts Table ──────────────────────────────────────────────── */}
+      {/* Contacts Table */}
       <div className="bg-white border border-gray-100 rounded-2xl shadow-sm overflow-hidden">
         {/* Toolbar */}
         <div className="flex items-center justify-between flex-wrap gap-3 px-5 py-4 border-b border-gray-100">
@@ -1199,87 +1433,95 @@ export function ContactListDetail({
           </div>
         ) : (
           <div>
-            <div className="grid grid-cols-[auto_1fr_150px_140px_100px_72px] gap-3 px-5 py-2.5 bg-gray-50 border-b border-gray-100 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
+            {/* Header row — 3 columns now: contact (with actions), details, status */}
+            <div className="grid grid-cols-[auto_1fr_280px_100px] gap-3 px-5 py-2.5 bg-gray-50 border-b border-gray-100 text-[10px] font-semibold text-gray-400 uppercase tracking-wider">
               <div />
               <div>Contact</div>
-              <div>Company</div>
-              <div>Phone</div>
+              <div>Details</div>
               <div>Status</div>
-              <div>Actions</div>
             </div>
             <div className="divide-y divide-gray-50">
               {contacts.map((contact) => (
                 <div
                   key={contact.id}
-                  className={`grid grid-cols-[auto_1fr_150px_140px_100px_72px] gap-3 px-5 py-3 items-center hover:bg-gray-50/50 transition-colors ${selectedIds.has(contact.id) ? "bg-blue-50/40" : ""}`}
+                  className={`grid grid-cols-[auto_1fr_280px_100px] gap-3 px-5 py-3 items-center transition-colors ${
+                    selectedIds.has(contact.id)
+                      ? "bg-blue-50/40"
+                      : "hover:bg-gray-50/50"
+                  }`}
+                  onMouseEnter={() => setHoveredId(contact.id)}
+                  onMouseLeave={() => setHoveredId(null)}
                 >
+                  {/* Checkbox */}
                   <Checkbox
                     checked={selectedIds.has(contact.id)}
                     onCheckedChange={() => toggleSelect(contact.id)}
                   />
-                  <div className="min-w-0">
-                    <p className="text-sm font-semibold text-gray-900 truncate">
-                      {[contact.firstName, contact.lastName]
-                        .filter(Boolean)
-                        .join(" ") || (
-                        <span className="text-gray-400 font-normal italic text-xs">
-                          No name
-                        </span>
+
+                  {/* ── Contact cell: name + email + inline actions ──────── */}
+                  <div className="min-w-0 flex items-center gap-2">
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <p className="text-sm font-semibold text-gray-900 truncate">
+                          {[contact.firstName, contact.lastName]
+                            .filter(Boolean)
+                            .join(" ") || (
+                            <span className="text-gray-400 font-normal italic text-xs">
+                              No name
+                            </span>
+                          )}
+                        </p>
+                        {/* Inline action buttons — visible on hover */}
+                        <div
+                          className={`flex items-center gap-0.5 transition-opacity duration-100 ${hoveredId === contact.id ? "opacity-100" : "opacity-0"}`}
+                        >
+                          <EditContactDialog
+                            listId={list.id}
+                            contact={contact}
+                            onSuccess={() => fetchContacts(currentPage, search)}
+                          />
+                          <button
+                            className="p-1 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 transition-colors"
+                            title="Remove contact"
+                            onClick={() => handleDeleteOne(contact.id)}
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                      <p className="text-xs text-gray-400 truncate flex items-center gap-1 mt-0.5">
+                        <Mail className="h-2.5 w-2.5 shrink-0" />
+                        {contact.email}
+                      </p>
+                    </div>
+                  </div>
+
+                  {/* Details: company + phone */}
+                  <div className="flex items-center gap-4 text-xs text-gray-500 min-w-0">
+                    <span className="truncate flex items-center gap-1 min-w-0">
+                      {contact.company ? (
+                        <>
+                          <Building2 className="h-3 w-3 shrink-0 text-gray-300" />
+                          {contact.company}
+                        </>
+                      ) : (
+                        <span className="text-gray-300">No company</span>
                       )}
-                    </p>
-                    <p className="text-xs text-gray-400 truncate flex items-center gap-1 mt-0.5">
-                      <Mail className="h-2.5 w-2.5 shrink-0" />
-                      {contact.email}
-                    </p>
+                    </span>
+                    <span className="shrink-0 flex items-center gap-1">
+                      {contact.phone ? (
+                        <>
+                          <Phone className="h-3 w-3 shrink-0 text-gray-300" />
+                          {contact.phone}
+                        </>
+                      ) : (
+                        <span className="text-gray-300">—</span>
+                      )}
+                    </span>
                   </div>
-                  <div className="text-xs text-gray-600 truncate">
-                    {contact.company ? (
-                      <span className="flex items-center gap-1">
-                        <Building2 className="h-3 w-3 shrink-0 text-gray-300" />
-                        {contact.company}
-                      </span>
-                    ) : (
-                      <span className="text-gray-300">—</span>
-                    )}
-                  </div>
-                  <div className="text-xs text-gray-600 truncate">
-                    {contact.phone ? (
-                      <span className="flex items-center gap-1">
-                        <Phone className="h-3 w-3 shrink-0 text-gray-300" />
-                        {contact.phone}
-                      </span>
-                    ) : (
-                      <span className="text-gray-300">—</span>
-                    )}
-                  </div>
+
+                  {/* Status */}
                   <div>{getStatusBadge(contact)}</div>
-                  <div className="flex items-center gap-0.5">
-                    <EditContactDialog
-                      listId={list.id}
-                      contact={contact}
-                      onSuccess={() => fetchContacts(currentPage, search)}
-                    />
-                    <button
-                      className="p-1.5 rounded-lg text-gray-300 hover:text-red-600 hover:bg-red-50 transition-colors"
-                      title="Remove contact"
-                      onClick={async () => {
-                        const res = await fetch(
-                          `/api/contact-lists/${list.id}/contacts`,
-                          {
-                            method: "DELETE",
-                            headers: { "Content-Type": "application/json" },
-                            body: JSON.stringify({ contactIds: [contact.id] }),
-                          },
-                        );
-                        if (res.ok) {
-                          toast.success("Contact removed.");
-                          fetchContacts(currentPage, search);
-                        }
-                      }}
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                    </button>
-                  </div>
                 </div>
               ))}
             </div>
