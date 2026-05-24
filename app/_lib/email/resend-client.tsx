@@ -189,7 +189,6 @@ export function generateEmailTemplate(options: TemplateOptions): string {
           </tr>
 
           <!-- Footer -->
-          ${unsubscribeSection}
 
           <!-- Bottom spacer -->
           <tr>
