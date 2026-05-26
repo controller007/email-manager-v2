@@ -73,7 +73,7 @@ export function Sidebar() {
           {!collapsed && (
             <div>
               <p className="text-sm font-bold text-white leading-none">
-                Email King
+                {process.env.NEXT_PUBLIC_APP_NAME}
               </p>
               <p className="text-[11px] text-slate-400 mt-0.5 font-medium">
                 Campaign Platform

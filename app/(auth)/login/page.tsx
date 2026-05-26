@@ -71,7 +71,9 @@ export default function LoginPage() {
           <div className="h-10 w-10 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center shadow-xl shadow-blue-900/40">
             <Crown className="h-5 w-5 text-white" />
           </div>
-          <span className="text-white font-bold text-lg">Email King</span>
+          <span className="text-white font-bold text-lg">
+            {process.env.NEXT_PUBLIC_APP_NAME}
+          </span>
         </div>
 
         {/* Hero text */}
@@ -115,7 +117,9 @@ export default function LoginPage() {
             <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center">
               <Crown className="h-4 w-4 text-white" />
             </div>
-            <span className="font-bold text-gray-900">Email King</span>
+            <span className="font-bold text-gray-900">
+              {process.env.NEXT_PUBLIC_APP_NAME}
+            </span>
           </div>
 
           <div className="bg-white rounded-2xl shadow-xl shadow-slate-200 border border-slate-100 p-8">
