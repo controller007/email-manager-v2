@@ -76,7 +76,8 @@ function aggregateFromEvents(
     complainedCount = 0,
     unsubscribedCount = 0;
 
-  for (const [, state] of bestState) {
+  // ── FIX: Replaced for...of loop with .forEach to prevent build compilation errors ──
+  bestState.forEach((state) => {
     switch (state) {
       case "clicked":
         deliveredCount++;
@@ -103,7 +104,7 @@ function aggregateFromEvents(
         unsubscribedCount++;
         break;
     }
-  }
+  });
 
   return {
     deliveredCount,
@@ -189,7 +190,6 @@ async function syncHistories(
     const existingEvents = eventsByHistory.get(history.id) ?? [];
 
     // ── PHASE 1: Aggregate from EmailRecipientEvent (our own DB) ─────────────
-    // This is always correct — it's what the webhook already wrote.
     const phase1Counts = aggregateFromEvents(existingEvents);
 
     // How many batchIds have no event row yet? (webhook gap)
@@ -257,7 +257,6 @@ async function syncHistories(
 
         for (const result of results) {
           if (!result?.lastEvent || !result.to) continue;
-          // Skip "queued"/"sent" — not meaningful for our counts
           if (eventPriority(result.lastEvent) < 2) continue;
 
           newEvents.push({
@@ -297,7 +296,6 @@ async function syncHistories(
           );
         }
 
-        // Re-aggregate with newly written events included
         finalCounts = aggregateFromEvents([
           ...existingEvents,
           ...toInsert.map((e) => ({ ...e, emailHistoryId: history.id })),
@@ -306,8 +304,6 @@ async function syncHistories(
     }
 
     // ── Write back to EmailHistory ────────────────────────────────────────────
-    // Math.max() ensures we never go backwards vs what the webhook already
-    // wrote via direct increments on the EmailHistory record.
     const updatedCounts: Counts = {
       deliveredCount: Math.max(
         history.deliveredCount,
@@ -357,7 +353,6 @@ async function syncHistories(
 
     syncedCount++;
   }
-  console.log(syncedCount);
 
   return { synced: syncedCount };
 }
@@ -381,6 +376,8 @@ export async function PUT(request: NextRequest) {
   }
 }
 
+// ─── GET /api/email-history — forced trigger sync ─────────────────────────────
+
 export async function GET(request: NextRequest) {
   try {
     const user = await requireAuth();
@@ -391,7 +388,6 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "id is required" }, { status: 400 });
     }
 
-    // Force-sync, bypassing the cooldown window
     const result = await syncHistories([id], user.id, true);
 
     const updated = await prisma.emailHistory.findFirst({
