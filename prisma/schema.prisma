@@ -88,32 +88,32 @@ model Domain {
 }
 
 model EmailHistory {
-  id                String   @id @default(auto()) @map("_id") @db.ObjectId
+  id                String                @id @default(auto()) @map("_id") @db.ObjectId
   subject           String
   body              String
   preheader         String?
-  contactListId     String   @db.ObjectId
-  userId            String   @db.ObjectId
-  senderId          String?  @db.ObjectId
+  contactListId     String                @db.ObjectId
+  userId            String                @db.ObjectId
+  senderId          String?               @db.ObjectId
   senderEmail       String?
   senderName        String?
-  sendMethod        String   @default("batch")
-  status            String   @default("sent") // sending | sent | failed
+  sendMethod        String                @default("batch")
+  status            String                @default("sent") // sending | sent | failed
   batchIds          String[]
-  sentCount         Int      @default(0)
-  deliveredCount    Int      @default(0)
-  openedCount       Int      @default(0)
-  clickedCount      Int      @default(0)
-  failedCount       Int      @default(0)
-  bouncedCount      Int      @default(0)
-  complainedCount   Int      @default(0)
-  unsubscribedCount Int      @default(0)
-  createdAt         DateTime @default(now())
-  updatedAt         DateTime @updatedAt
-
-  contactList     ContactList           @relation(fields: [contactListId], references: [id], onDelete: Cascade)
-  user            User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
-  recipientEvents EmailRecipientEvent[]
+  sentCount         Int                   @default(0)
+  deliveredCount    Int                   @default(0)
+  openedCount       Int                   @default(0)
+  clickedCount      Int                   @default(0)
+  failedCount       Int                   @default(0)
+  bouncedCount      Int                   @default(0)
+  complainedCount   Int                   @default(0)
+  unsubscribedCount Int                   @default(0)
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+  syncedAt          DateTime? // ← add this
+  contactList       ContactList           @relation(fields: [contactListId], references: [id], onDelete: Cascade)
+  user              User                  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  recipientEvents   EmailRecipientEvent[]
 
   @@map("email_history")
 }
@@ -129,6 +129,7 @@ model EmailRecipientEvent {
 
   emailHistory EmailHistory @relation(fields: [emailHistoryId], references: [id], onDelete: Cascade)
 
+  @@unique([emailHistoryId, resendMessageId])
   @@map("email_recipient_events")
 }
 

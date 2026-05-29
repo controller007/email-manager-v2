@@ -61,10 +61,12 @@ export default async function EmailHistoryPage({ searchParams }: PageProps) {
   ]);
 
   const totalPages = Math.ceil(total / PAGE_SIZE);
-
-  // IDs visible on this page — used by the sync client
   const visibleHistoryIds = emailHistory
-    .filter((h) => h.status === "sent" && h.batchIds.length > 0)
+    .filter(
+      (h) =>
+        h.batchIds.length > 0 &&
+        (h.status === "sent" || h.status === "sending" || !h.syncedAt),
+    )
     .map((h) => h.id);
 
   return (
@@ -101,7 +103,7 @@ export default async function EmailHistoryPage({ searchParams }: PageProps) {
         total={total}
       />
 
-      {/* Background sync — updates status from Resend for visible records */}
+      {/* Background sync — polls every 30s for visible records */}
       <HistorySyncClient historyIds={visibleHistoryIds} />
     </div>
   );

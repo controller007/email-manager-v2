@@ -1,50 +1,67 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
 interface HistorySyncClientProps {
   historyIds: string[];
 }
 
-/**
- * Headless component: auto-syncs visible email history records via Resend API
- * on mount and whenever the set of visible IDs changes (e.g. pagination).
- * No hasFetchedOnMount guard — the serializedIds dependency alone prevents
- * duplicate work: router.refresh() only re-renders server components with
- * updated counts, the IDs themselves don't change so the effect won't re-fire.
- */
 export function HistorySyncClient({ historyIds }: HistorySyncClientProps) {
   const router = useRouter();
-  const serializedIds = JSON.stringify(historyIds);
-  // Track in-flight request to avoid parallel runs
   const isSyncing = useRef(false);
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [lastSynced, setLastSynced] = useState<Date | null>(null);
 
-  useEffect(() => {
-    if (historyIds.length === 0 || isSyncing.current) return;
+  const serializedIds = JSON.stringify(historyIds);
+
+  async function runSync(ids: string[]) {
+    if (ids.length === 0 || isSyncing.current) return;
+    if (document.visibilityState === "hidden") return;
 
     isSyncing.current = true;
+    try {
+      const response = await fetch("/api/email-history", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ historyIds: ids }),
+      });
 
-    async function runSync() {
-      try {
-        const response = await fetch("/api/email-history", {
-          method: "PUT",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ historyIds }),
-        });
+      if (response.ok) {
+        setLastSynced(new Date());
+        router.refresh();
+      }
+    } catch (err) {
+      console.error("[HistorySyncClient] Background sync failed:", err);
+    } finally {
+      isSyncing.current = false;
+    }
+  }
 
-        if (response.ok) {
-          router.refresh();
-        }
-      } catch (err) {
-        console.error("Failed background viewport sync:", err);
-      } finally {
-        isSyncing.current = false;
+  useEffect(() => {
+    const ids: string[] = JSON.parse(serializedIds);
+    if (ids.length === 0) return;
+
+    runSync(ids);
+
+    if (intervalRef.current) clearInterval(intervalRef.current);
+    intervalRef.current = setInterval(() => runSync(ids), 30_000);
+
+    return () => {
+      if (intervalRef.current) clearInterval(intervalRef.current);
+    };
+  }, [serializedIds]);
+
+  useEffect(() => {
+    function handleVisibility() {
+      if (document.visibilityState === "visible") {
+        const ids: string[] = JSON.parse(serializedIds);
+        runSync(ids);
       }
     }
-
-    runSync();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
+    document.addEventListener("visibilitychange", handleVisibility);
+    return () =>
+      document.removeEventListener("visibilitychange", handleVisibility);
   }, [serializedIds]);
 
   return null;

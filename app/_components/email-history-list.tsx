@@ -34,6 +34,7 @@ import {
   BarChart3,
   Calendar,
   Globe,
+  RefreshCw, // ── Added Icon ──
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -454,6 +455,9 @@ export function EmailHistoryList({
   const [isSelectAll, setIsSelectAll] = useState(false);
   const [openDetailId, setOpenDetailId] = useState<string | null>(null);
 
+  // Track individual row sync loaders
+  const [syncingIds, setSyncingIds] = useState<Set<string>>(new Set());
+
   const handleSelectItem = (id: string, checked: boolean) => {
     const next = new Set(selectedItems);
     checked ? next.add(id) : next.delete(id);
@@ -508,6 +512,32 @@ export function EmailHistoryList({
         toast.error("Failed to delete.");
       }
     });
+  };
+
+  // ── Manual Force Resync Action ──────────────────────────────────────────────
+  const handleResync = async (id: string) => {
+    setSyncingIds((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+
+    try {
+      const response = await fetch(`/api/email-history?id=${id}`);
+      if (!response.ok) throw new Error("Sync returned bad status");
+
+      toast.success("Campaign metrics synchronized!");
+      router.refresh();
+    } catch (err) {
+      console.error("[EmailHistoryList] Manual resync failed:", err);
+      toast.error("Failed to sync campaign statistics.");
+    } finally {
+      setSyncingIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
+      });
+    }
   };
 
   const navigatePage = (page: number) => {
@@ -599,7 +629,7 @@ export function EmailHistoryList({
               ? Math.round((email.openedCount / email.deliveredCount) * 100)
               : 0;
           const isSelected = selectedItems.has(email.id);
-          const detailEmail = emailHistory.find((e) => e.id === openDetailId);
+          const isSyncingThis = syncingIds.has(email.id);
 
           return (
             <div
@@ -686,18 +716,36 @@ export function EmailHistoryList({
                 ))}
               </div>
 
-              {/* Delete */}
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  handleSingleDelete(email.id);
-                }}
-                disabled={isPending}
-                className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors shrink-0"
-                title="Delete"
-              >
-                <Trash2 className="h-3.5 w-3.5" />
-              </button>
+              {/* Action Buttons Container */}
+              <div className="flex items-center gap-1 shrink-0">
+                {/* Resync Button */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation(); // Stop dialog from popping open
+                    handleResync(email.id);
+                  }}
+                  disabled={isPending || isSyncingThis}
+                  className="p-1.5 rounded-lg text-gray-300 hover:text-blue-600 hover:bg-blue-50 transition-colors disabled:opacity-40"
+                  title="Force metrics resync"
+                >
+                  <RefreshCw
+                    className={`h-3.5 w-3.5 ${isSyncingThis ? "animate-spin text-blue-600" : ""}`}
+                  />
+                </button>
+
+                {/* Delete Button */}
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleSingleDelete(email.id);
+                  }}
+                  disabled={isPending}
+                  className="p-1.5 rounded-lg text-gray-300 hover:text-red-500 hover:bg-red-50 transition-colors"
+                  title="Delete"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
             </div>
           );
         })}

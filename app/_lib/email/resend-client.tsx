@@ -1,4 +1,4 @@
-// app/_lib/email/resend-client.ts
+// app/_lib/email/resend-client.tsx
 import { Resend } from "resend";
 
 export const resend = new Resend(process.env.RESEND_API_KEY);
@@ -19,12 +19,6 @@ export interface SendBatchOptions {
   idempotencyKeyPrefix?: string;
 }
 
-// ─── Batch Sender ─────────────────────────────────────────────────────────────
-
-/**
- * Sends emails in chunks of 100 (Resend batch limit).
- * Returns array of Resend message IDs.
- */
 export async function sendBatch(
   emails: BatchEmailPayload[],
   idempotencyKeyPrefix?: string,
@@ -56,10 +50,18 @@ export async function sendBatch(
       }
 
       if (result.data) {
-        // result.data is an array of { id: string }
-        const ids = Array.isArray(result.data)
-          ? result.data.map((r: { id: string }) => r.id).filter(Boolean)
+        const rawData = result.data;
+        const ids = Array.isArray(rawData.data)
+          ? rawData.data.map((r: { id: string }) => r.id).filter(Boolean)
           : [];
+
+        if (ids.length === 0 && chunk.length > 0) {
+          console.warn(
+            `Batch chunk ${i}: got 0 IDs from ${chunk.length} emails. ` +
+              `result.data shape: ${JSON.stringify(Object.keys(rawData))}`,
+          );
+        }
+
         allIds.push(...ids);
       }
     } catch (err) {
@@ -68,6 +70,9 @@ export async function sendBatch(
     }
   }
 
+  console.log(
+    `sendBatch complete: ${allIds.length} IDs collected, ${failedCount} failed`,
+  );
   return { ids: allIds, failedCount };
 }
 
@@ -143,7 +148,6 @@ export function generateEmailTemplate(options: TemplateOptions): string {
     table { border-spacing: 0; border-collapse: collapse; mso-table-lspace: 0pt; mso-table-rspace: 0pt; }
     td { padding: 0; }
     img { border: 0; outline: none; text-decoration: none; -ms-interpolation-mode: bicubic; }
-    /* Tiptap / rich text styles */
     .email-body h1 { font-size: 28px; font-weight: 700; margin: 0 0 16px; color: #111827; }
     .email-body h2 { font-size: 22px; font-weight: 600; margin: 0 0 14px; color: #111827; }
     .email-body h3 { font-size: 18px; font-weight: 600; margin: 0 0 12px; color: #111827; }
@@ -175,11 +179,9 @@ export function generateEmailTemplate(options: TemplateOptions): string {
     <tr>
       <td align="center" style="padding: 40px 16px;">
 
-        <!-- Email container -->
         <table class="email-wrapper" width="600" cellpadding="0" cellspacing="0" role="presentation"
                style="background:#ffffff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,0.08);">
 
-          <!-- Body content -->
           <tr>
             <td class="email-content" style="padding: 40px 48px; color: #374151; font-size: 15px; line-height: 1.7;">
               <div class="email-body">
@@ -188,15 +190,12 @@ export function generateEmailTemplate(options: TemplateOptions): string {
             </td>
           </tr>
 
-          <!-- Footer -->
 
-          <!-- Bottom spacer -->
           <tr>
             <td style="height: 20px;"></td>
           </tr>
 
         </table>
-        <!-- /Email container -->
 
       </td>
     </tr>
@@ -204,12 +203,4 @@ export function generateEmailTemplate(options: TemplateOptions): string {
 
 </body>
 </html>`;
-}
-
-
-export function generateEmailTemplateLegacy(
-  body: string,
-  subject: string,
-): string {
-  return generateEmailTemplate({ body, subject, senderName: "" });
 }

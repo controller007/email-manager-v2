@@ -1,81 +1,252 @@
+// app/api/email-history/route.ts
 import { NextRequest, NextResponse } from "next/server";
 import { requireAuth } from "@/app/_lib/auth/session";
 import prisma from "@/app/_lib/db/prisma";
 import { resend } from "@/app/_lib/email/resend-client";
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
+const SYNC_COOLDOWN_MS = 60_000;
+const RESEND_CHUNK_SIZE = 8;
+const RESEND_CHUNK_PAUSE_MS = 150;
+
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+const EVENT_PRIORITY: Record<string, number> = {
+  queued: 0,
+  sent: 1,
+  delivered: 2,
+  opened: 3,
+  clicked: 4,
+  bounced: 2,
+  failed: 2,
+  complained: 2,
+  unsubscribed: 2,
+};
+
+function eventPriority(event: string): number {
+  return EVENT_PRIORITY[event] ?? 0;
+}
+
+type EventRow = {
+  emailHistoryId: string;
+  recipientEmail: string;
+  status: string;
+  resendMessageId: string | null;
+};
+
+type Counts = {
+  deliveredCount: number;
+  openedCount: number;
+  clickedCount: number;
+  bouncedCount: number;
+  failedCount: number;
+  complainedCount: number;
+  unsubscribedCount: number;
+};
+
 /**
- * PUT /api/email-history
+ * Derives aggregate counts from EmailRecipientEvent rows.
  *
- * Called by HistorySyncClient whenever the visible email history IDs change.
- * Fetches per-email status from Resend using individual message IDs stored in
- * batchIds, then overwrites the aggregate counters on each EmailHistory record.
- *
- * Resend's emails.get(id) returns { last_event: string } where last_event is:
- *   queued | sent | delivered | opened | clicked | bounced | complained
- *
- * Cascade logic:
- *   clicked  → delivered + opened + clicked
- *   opened   → delivered + opened
- *   delivered → delivered
- *   bounced  → bounced (delivery failure, not "delivered")
- *   complained → complained
- *   queued/sent → not yet delivered, skip
+ * Takes the best-known state per recipient (e.g. if someone has both a
+ * "delivered" and an "opened" row, they count as "opened" only — no
+ * double-counting). "clicked" implies opened + delivered, "opened" implies
+ * delivered.
  */
-export async function PUT(request: NextRequest) {
-  try {
-    const user = await requireAuth();
-
-    const body = await request.json();
-    const { historyIds } = body;
-
-    if (!Array.isArray(historyIds) || historyIds.length === 0) {
-      return NextResponse.json({
-        success: true,
-        message: "No history IDs provided",
-      });
+function aggregateFromEvents(
+  events: Pick<EventRow, "recipientEmail" | "status">[],
+): Counts {
+  const bestState = new Map<string, string>();
+  for (const event of events) {
+    const current = bestState.get(event.recipientEmail);
+    if (!current || eventPriority(event.status) > eventPriority(current)) {
+      bestState.set(event.recipientEmail, event.status);
     }
+  }
 
-    // Fetch history records that belong to this user and have batch IDs to check
-    // We check BOTH "sent" and "sending" (in case status update was missed)
-    const emailHistories = await prisma.emailHistory.findMany({
-      where: {
-        id: { in: historyIds },
-        userId: user.id,
-        batchIds: { isEmpty: false },
-      },
-      select: { id: true, batchIds: true, sentCount: true },
-    });
+  let deliveredCount = 0,
+    openedCount = 0,
+    clickedCount = 0;
+  let bouncedCount = 0,
+    failedCount = 0,
+    complainedCount = 0,
+    unsubscribedCount = 0;
 
-    if (emailHistories.length === 0) {
-      return NextResponse.json({ success: true, synced: 0 });
+  for (const [, state] of bestState) {
+    switch (state) {
+      case "clicked":
+        deliveredCount++;
+        openedCount++;
+        clickedCount++;
+        break;
+      case "opened":
+        deliveredCount++;
+        openedCount++;
+        break;
+      case "delivered":
+        deliveredCount++;
+        break;
+      case "bounced":
+        bouncedCount++;
+        break;
+      case "failed":
+        failedCount++;
+        break;
+      case "complained":
+        complainedCount++;
+        break;
+      case "unsubscribed":
+        unsubscribedCount++;
+        break;
     }
+  }
 
-    const CONCURRENT_CHUNK = 10; // stay within Resend rate limits
+  return {
+    deliveredCount,
+    openedCount,
+    clickedCount,
+    bouncedCount,
+    failedCount,
+    complainedCount,
+    unsubscribedCount,
+  };
+}
 
-    for (const history of emailHistories) {
-      if (!history.batchIds || history.batchIds.length === 0) continue;
+function countsMatch(a: Counts, b: Counts): boolean {
+  return (
+    a.deliveredCount === b.deliveredCount &&
+    a.openedCount === b.openedCount &&
+    a.clickedCount === b.clickedCount &&
+    a.bouncedCount === b.bouncedCount &&
+    a.failedCount === b.failedCount &&
+    a.complainedCount === b.complainedCount &&
+    a.unsubscribedCount === b.unsubscribedCount
+  );
+}
 
-      let deliveredCount = 0;
-      let openedCount = 0;
-      let clickedCount = 0;
-      let bouncedCount = 0;
-      let failedCount = 0;
-      let complainedCount = 0;
-      let unsubscribedCount = 0;
+// ─── Shared sync logic ────────────────────────────────────────────────────────
 
-      // Process batchIds in parallel chunks to respect Resend rate limits
-      for (let i = 0; i < history.batchIds.length; i += CONCURRENT_CHUNK) {
-        const chunk = history.batchIds.slice(i, i + CONCURRENT_CHUNK);
+async function syncHistories(
+  historyIds: string[],
+  userId: string,
+  forceCooldownBypass = false,
+) {
+  const cooldownCutoff = new Date(Date.now() - SYNC_COOLDOWN_MS);
+
+  const histories = await prisma.emailHistory.findMany({
+    where: {
+      id: { in: historyIds },
+      userId,
+      ...(forceCooldownBypass
+        ? {}
+        : {
+            OR: [{ syncedAt: null }, { syncedAt: { lt: cooldownCutoff } }],
+          }),
+    },
+    select: {
+      id: true,
+      batchIds: true,
+      sentCount: true,
+      deliveredCount: true,
+      openedCount: true,
+      clickedCount: true,
+      bouncedCount: true,
+      failedCount: true,
+      complainedCount: true,
+      unsubscribedCount: true,
+      status: true,
+    },
+  });
+
+  if (histories.length === 0) return { synced: 0 };
+
+  // Load all recipient events for these histories in one DB round-trip
+  const allEvents = await prisma.emailRecipientEvent.findMany({
+    where: { emailHistoryId: { in: histories.map((h) => h.id) } },
+    select: {
+      emailHistoryId: true,
+      recipientEmail: true,
+      status: true,
+      resendMessageId: true,
+    },
+  });
+
+  // Group by historyId
+  const eventsByHistory = new Map<string, EventRow[]>();
+  for (const event of allEvents) {
+    const arr = eventsByHistory.get(event.emailHistoryId) ?? [];
+    arr.push(event);
+    eventsByHistory.set(event.emailHistoryId, arr);
+  }
+
+  let syncedCount = 0;
+
+  for (const history of histories) {
+    const existingEvents = eventsByHistory.get(history.id) ?? [];
+
+    // ── PHASE 1: Aggregate from EmailRecipientEvent (our own DB) ─────────────
+    // This is always correct — it's what the webhook already wrote.
+    const phase1Counts = aggregateFromEvents(existingEvents);
+
+    // How many batchIds have no event row yet? (webhook gap)
+    const coveredMessageIds = new Set(
+      existingEvents.map((e) => e.resendMessageId).filter(Boolean) as string[],
+    );
+    const uncoveredBatchIds = (history.batchIds ?? []).filter(
+      (id) => !coveredMessageIds.has(id),
+    );
+
+    // Total accounted for by Phase 1
+    const phase1Total =
+      phase1Counts.deliveredCount +
+      phase1Counts.bouncedCount +
+      phase1Counts.failedCount +
+      phase1Counts.complainedCount +
+      phase1Counts.unsubscribedCount;
+
+    // If Phase 1 already accounts for everyone, skip Phase 2 entirely
+    const allAccountedFor =
+      history.sentCount > 0 && phase1Total >= history.sentCount;
+
+    console.log(
+      `[sync] ${history.id}: ${existingEvents.length} events, ` +
+        `${uncoveredBatchIds.length}/${history.batchIds.length} uncovered batchIds, ` +
+        `phase1Total=${phase1Total}/${history.sentCount} ` +
+        `allAccountedFor=${allAccountedFor}`,
+    );
+
+    let finalCounts = phase1Counts;
+
+    if (
+      uncoveredBatchIds.length > 0 &&
+      !allAccountedFor &&
+      history.batchIds.length > 0
+    ) {
+      console.log(
+        `[sync] ${history.id}: gap-filling ${uncoveredBatchIds.length} IDs via Resend API`,
+      );
+
+      const newEvents: {
+        recipientEmail: string;
+        status: string;
+        resendMessageId: string;
+      }[] = [];
+
+      for (let i = 0; i < uncoveredBatchIds.length; i += RESEND_CHUNK_SIZE) {
+        const chunk = uncoveredBatchIds.slice(i, i + RESEND_CHUNK_SIZE);
 
         const results = await Promise.all(
-          chunk.map(async (messageId: string) => {
+          chunk.map(async (messageId) => {
             try {
               const { data, error } = await resend.emails.get(messageId);
               if (error || !data) return null;
-
               return {
                 messageId,
-                lastEvent: data.last_event as string | undefined,
+                lastEvent: (data.last_event as string | undefined) ?? null,
                 to: Array.isArray(data.to) ? data.to[0] : data.to || "",
               };
             } catch {
@@ -85,104 +256,165 @@ export async function PUT(request: NextRequest) {
         );
 
         for (const result of results) {
-          if (!result || !result.lastEvent) continue;
+          if (!result?.lastEvent || !result.to) continue;
+          // Skip "queued"/"sent" — not meaningful for our counts
+          if (eventPriority(result.lastEvent) < 2) continue;
 
-          const { messageId, lastEvent, to: recipientEmail } = result;
+          newEvents.push({
+            recipientEmail: result.to,
+            status: result.lastEvent,
+            resendMessageId: result.messageId,
+          });
+        }
 
-          // Upsert recipient event record for audit trail
-          if (recipientEmail) {
-            try {
-              const existing = await prisma.emailRecipientEvent.findFirst({
-                where: {
-                  emailHistoryId: history.id,
-                  resendMessageId: messageId,
-                },
-              });
-
-              if (!existing) {
-                await prisma.emailRecipientEvent.create({
-                  data: {
-                    emailHistoryId: history.id,
-                    recipientEmail,
-                    status: lastEvent,
-                    resendMessageId: messageId,
-                  },
-                });
-              } else if (existing.status !== lastEvent) {
-                await prisma.emailRecipientEvent.update({
-                  where: { id: existing.id },
-                  data: { status: lastEvent },
-                });
-              }
-            } catch {
-              // Non-fatal — continue with count aggregation
-            }
-          }
-
-          // Aggregate counts with cascade (clicked implies opened implies delivered)
-          switch (lastEvent) {
-            case "delivered":
-              deliveredCount++;
-              break;
-            case "opened":
-              deliveredCount++;
-              openedCount++;
-              break;
-            case "clicked":
-              deliveredCount++;
-              openedCount++;
-              clickedCount++;
-              break;
-            case "bounced":
-              bouncedCount++;
-              break;
-            case "failed":
-              // Resend sometimes uses "failed" for transient failures
-              failedCount++;
-              break;
-            case "complained":
-              complainedCount++;
-              break;
-            case "unsubscribed":
-              unsubscribedCount++;
-              break;
-            // "queued" and "sent" mean not yet delivered — don't count
-            default:
-              break;
-          }
+        if (i + RESEND_CHUNK_SIZE < uncoveredBatchIds.length) {
+          await sleep(RESEND_CHUNK_PAUSE_MS);
         }
       }
 
-      // Only update if we got meaningful data from Resend
-      const totalKnown =
-        deliveredCount +
-        openedCount +
-        clickedCount +
-        bouncedCount +
-        failedCount +
-        complainedCount;
+      if (newEvents.length > 0) {
+        // Deduplicate before inserting
+        const toInsert = newEvents.filter(
+          (e) =>
+            !existingEvents.some(
+              (ex) =>
+                ex.resendMessageId === e.resendMessageId &&
+                ex.status === e.status,
+            ),
+        );
 
-      if (totalKnown > 0 || history.batchIds.length > 0) {
-        await prisma.emailHistory.update({
-          where: { id: history.id },
-          data: {
-            deliveredCount,
-            openedCount,
-            clickedCount,
-            bouncedCount,
-            failedCount,
-            complainedCount,
-            unsubscribedCount,
-          },
-        });
+        if (toInsert.length > 0) {
+          await prisma.emailRecipientEvent.createMany({
+            data: toInsert.map((e) => ({
+              emailHistoryId: history.id,
+              recipientEmail: e.recipientEmail,
+              status: e.status,
+              resendMessageId: e.resendMessageId,
+            })),
+          });
+          console.log(
+            `[sync] ${history.id}: wrote ${toInsert.length} new events from Resend gap-fill`,
+          );
+        }
+
+        // Re-aggregate with newly written events included
+        finalCounts = aggregateFromEvents([
+          ...existingEvents,
+          ...toInsert.map((e) => ({ ...e, emailHistoryId: history.id })),
+        ]);
       }
     }
 
-    return NextResponse.json({ success: true, synced: emailHistories.length });
+    // ── Write back to EmailHistory ────────────────────────────────────────────
+    // Math.max() ensures we never go backwards vs what the webhook already
+    // wrote via direct increments on the EmailHistory record.
+    const updatedCounts: Counts = {
+      deliveredCount: Math.max(
+        history.deliveredCount,
+        finalCounts.deliveredCount,
+      ),
+      openedCount: Math.max(history.openedCount, finalCounts.openedCount),
+      clickedCount: Math.max(history.clickedCount, finalCounts.clickedCount),
+      bouncedCount: Math.max(history.bouncedCount, finalCounts.bouncedCount),
+      failedCount: Math.max(history.failedCount, finalCounts.failedCount),
+      complainedCount: Math.max(
+        history.complainedCount,
+        finalCounts.complainedCount,
+      ),
+      unsubscribedCount: Math.max(
+        history.unsubscribedCount,
+        finalCounts.unsubscribedCount,
+      ),
+    };
+
+    const changed = !countsMatch(
+      {
+        deliveredCount: history.deliveredCount,
+        openedCount: history.openedCount,
+        clickedCount: history.clickedCount,
+        bouncedCount: history.bouncedCount,
+        failedCount: history.failedCount,
+        complainedCount: history.complainedCount,
+        unsubscribedCount: history.unsubscribedCount,
+      },
+      updatedCounts,
+    );
+
+    await prisma.emailHistory.update({
+      where: { id: history.id },
+      data: {
+        ...(changed ? updatedCounts : {}),
+        syncedAt: new Date(),
+        ...(updatedCounts.deliveredCount > 0 && history.status === "sending"
+          ? { status: "sent" }
+          : {}),
+      },
+    });
+
+    if (changed) {
+      console.log(`[sync] ${history.id}: wrote updated counts`, updatedCounts);
+    }
+
+    syncedCount++;
+  }
+  console.log(syncedCount);
+
+  return { synced: syncedCount };
+}
+
+// ─── PUT /api/email-history — background polling ──────────────────────────────
+
+export async function PUT(request: NextRequest) {
+  try {
+    const user = await requireAuth();
+    const body = await request.json();
+    const { historyIds } = body;
+    if (!Array.isArray(historyIds) || historyIds.length === 0) {
+      return NextResponse.json({ success: true, synced: 0 });
+    }
+
+    const result = await syncHistories(historyIds, user.id, false);
+    return NextResponse.json({ success: true, ...result });
   } catch (error) {
-    console.error("Error syncing email history:", error);
+    console.error("[sync] PUT error:", error);
+    return NextResponse.json({ error: "Failed to sync" }, { status: 500 });
+  }
+}
+
+export async function GET(request: NextRequest) {
+  try {
+    const user = await requireAuth();
+    const { searchParams } = new URL(request.url);
+    const id = searchParams.get("id");
+
+    if (!id) {
+      return NextResponse.json({ error: "id is required" }, { status: 400 });
+    }
+
+    // Force-sync, bypassing the cooldown window
+    const result = await syncHistories([id], user.id, true);
+
+    const updated = await prisma.emailHistory.findFirst({
+      where: { id, userId: user.id },
+      select: {
+        id: true,
+        deliveredCount: true,
+        openedCount: true,
+        clickedCount: true,
+        bouncedCount: true,
+        failedCount: true,
+        complainedCount: true,
+        unsubscribedCount: true,
+        status: true,
+        syncedAt: true,
+      },
+    });
+
+    return NextResponse.json({ success: true, ...result, record: updated });
+  } catch (error) {
+    console.error("[sync] GET error:", error);
     return NextResponse.json(
-      { error: "Failed to sync email history" },
+      { error: "Internal server error" },
       { status: 500 },
     );
   }
